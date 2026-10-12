@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>pyl Academy</title>
+<script>
+  // 先套主題,避免閃一下白底
+  (function () { try { var t = localStorage.getItem("pyl_theme"); if (!t) t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"; document.documentElement.setAttribute("data-theme", t === "light" ? "light" : "dark"); } catch (e) {} })();
+</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="topbar">
+  <button id="nav-btn" class="icon-btn" aria-label="目錄">☰</button>
+  <a class="logo" href="#/"><span class="mark">py</span><span class="word">pyl <b>Academy</b></span></a>
+  <nav id="topnav">
+    <a href="#/" data-r="home">首頁</a>
+    <a href="#/courses" data-r="courses">課程</a>
+    <a href="#/lc" data-r="lc">刷題</a>
+  </nav>
+  <div class="tb-right">
+    <input id="search" type="search" placeholder="搜尋課文、程式、題目…" autocomplete="off">
+    <button id="theme-btn" class="icon-btn" title="切換深色 / 淺色">☀️</button>
+    <span id="prog-pill" class="pill"></span>
+  </div>
+</header>
+<main id="main"></main>
+<nav id="tabbar">
+  <a href="#/" data-r="home"><span>🏠</span>首頁</a>
+  <a href="#/courses" data-r="courses"><span>📚</span>課程</a>
+  <a href="#/continue" data-r="continue"><span>▶</span>繼續</a>
+  <a href="#/lc" data-r="lc"><span>🧩</span>刷題</a>
+</nav>
+<div id="drawer" class="hidden"><div class="drawer-in" id="drawer-in"></div></div>
+<div id="lightbox" class="hidden"><img id="lb-img" alt=""><div id="lb-cap"></div></div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]], processEscapes: true },
+    svg: { fontCache: "local" },
+    startup: { typeset: false }
+  };
+</script>
+<script src="mathjax-tex-svg.js" async></script>
+<script src="marked.min.js"></script>
+<script src="vendor/highlight.min.js"></script>
+<script src="vendor/powershell.min.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
