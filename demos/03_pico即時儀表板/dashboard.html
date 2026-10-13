@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta name="robots" content="noindex">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pico 即時儀表板</title>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<style>
+  :root { --bg: #0c0b0d; --card: #19161b; --line: #2f2933; --text: #f2ede3; --muted: #a99f92; --gold: #e8b84a; --red: #e0283f; --ok: #3fbf7f }
+  * { box-sizing: border-box }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: "Segoe UI", "Noto Sans TC", system-ui, sans-serif }
+  header { padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid var(--line) }
+  header b { color: var(--gold) }
+  main { padding: 12px 16px; display: grid; gap: 12px }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px }
+  .card h3 { margin: 0 0 6px; font-size: 14px; color: var(--gold) }
+  canvas { width: 100%; height: 180px; display: block }
+  .nums { display: flex; gap: 16px; flex-wrap: wrap; font-family: Consolas, monospace; font-size: 14px }
+  .dev { display: inline-block; padding: 2px 8px; border-radius: 999px; margin: 2px; font-size: 13px; background: rgba(63, 191, 127, .15); color: var(--ok); cursor: pointer }
+  .dev.off { background: rgba(224, 40, 63, .15); color: #ff6b7d }
+  .dev.sel { outline: 2px solid var(--gold) }
+  .muted { color: var(--muted); font-size: 13px }
+</style>
+</head>
+<body>
+<header><b>📈 Pico 即時儀表板</b><span>房間 <b id="room"></b></span><span class="muted">沒有 Pico?執行 python fake_pico.py 模擬一片</span></header>
+<main>
+  <div class="card"><h3>裝置(點一下切換)</h3><div id="devs" class="muted">等待裝置發布資料…</div></div>
+  <div class="card"><h3>加速度(g) <span class="muted">— 平放時 z ≈ 1,那就是重力</span></h3><canvas id="acc"></canvas><div class="nums" id="accN"></div></div>
+  <div class="card"><h3>角速度(°/s) <span class="muted">— 轉越快數字越大</span></h3><canvas id="gyro"></canvas><div class="nums" id="gyroN"></div></div>
+</main>
+
+<script>
+// ====== 1. 設定 ======
+const ROOM   = new URLSearchParams(location.search).get("room") || "demo";
+const PREFIX = `pyl-academy/v1/${ROOM}/pico/`;
+document.getElementById("room").textContent = ROOM;
+const N = 150;                                   // 畫面保留最近 150 筆(約 15 秒)
+const devices = {};                              // 裝置ID -> {online, data:[...]}
+let selected = null;
+
+// ====== 2. 訂閱所有裝置:+ 代表「任何一台」 ======
+const client = mqtt.connect("wss://broker.emqx.io:8084/mqtt", { clientId: "dash-" + Math.random().toString(16).slice(2, 10) });
+client.on("connect", () => client.subscribe([PREFIX + "+/imu", PREFIX + "+/status"]));
+
+client.on("message", (topic, payload) => {
+  const [dev, kind] = topic.slice(PREFIX.length).split("/");
+  const d = devices[dev] || (devices[dev] = { online: true, data: [] });
+  if (kind === "status") d.online = payload.toString() === "online";
+  else {
+    d.online = true;
+    d.data.push(JSON.parse(payload.toString()));
+    if (d.data.length > N) d.data.shift();       // 只留最近 N 筆,記憶體不會一直長
+    if (!selected) selected = dev;
+  }
+  renderDevices();
+});
+
+function renderDevices() {
+  const box = document.getElementById("devs");
+  box.innerHTML = Object.keys(devices).map(id =>
+    `<span class="dev ${devices[id].online ? "" : "off"} ${id === selected ? "sel" : ""}" data-id="${id}">${devices[id].online ? "🟢" : "🔴"} ${id}</span>`).join("") || "等待裝置發布資料…";
+  box.querySelectorAll(".dev").forEach(el => el.onclick = () => { selected = el.dataset.id; renderDevices(); });
+}
+
+// ====== 3. 畫折線圖:不用圖表套件,canvas 自己畫 ======
+const COLORS = ["#e0283f", "#3fbf7f", "#4aa8e8"];
+function plot(id, keys, range, numsId) {
+  const cv = document.getElementById(id), g = cv.getContext("2d");
+  cv.width = cv.clientWidth * devicePixelRatio; cv.height = cv.clientHeight * devicePixelRatio;
+  const w = cv.width, h = cv.height, data = selected && devices[selected] ? devices[selected].data : [];
+  g.clearRect(0, 0, w, h);
+  g.strokeStyle = "#2f2933"; g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();   // 0 的位置
+  keys.forEach((k, i) => {
+    g.strokeStyle = COLORS[i]; g.lineWidth = 2 * devicePixelRatio; g.beginPath();
+    data.forEach((p, j) => {
+      const x = j / (N - 1) * w, y = h / 2 - p[k] / range * (h / 2);
+      j ? g.lineTo(x, y) : g.moveTo(x, y);
+    });
+    g.stroke();
+  });
+  const last = data[data.length - 1];
+  document.getElementById(numsId).innerHTML = keys.map((k, i) => `<span style="color:${COLORS[i]}">${k} = ${last ? last[k] : "—"}</span>`).join("");
+}
+(function loop() { plot("acc", ["ax", "ay", "az"], 2, "accN"); plot("gyro", ["gx", "gy", "gz"], 250, "gyroN"); requestAnimationFrame(loop); })();
+</script>
+</body>
+</html>

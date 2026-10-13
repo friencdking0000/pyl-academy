@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta name="robots" content="noindex">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>MQTT 多人搶金幣</title>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<style>
+  :root { --bg: #0c0b0d; --card: #19161b; --line: #2f2933; --text: #f2ede3; --muted: #a99f92; --gold: #e8b84a; --red: #e0283f; --ok: #3fbf7f }
+  * { box-sizing: border-box }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: "Segoe UI", "Noto Sans TC", system-ui, sans-serif; text-align: center }
+  header { padding: 10px 16px; display: flex; gap: 12px; justify-content: center; align-items: center; flex-wrap: wrap }
+  header b { color: var(--gold) }
+  #srv { padding: 3px 10px; border-radius: 999px; background: rgba(224, 40, 63, .15); color: #ff6b7d; font-size: 13px }
+  #srv.on { background: rgba(63, 191, 127, .15); color: var(--ok) }
+  canvas { width: min(800px, 96vw); aspect-ratio: 8 / 5; background: var(--card); border: 1px solid var(--line); border-radius: 12px; touch-action: none }
+  #board { color: var(--muted); font-size: 14px; margin: 6px }
+  .pad { display: none; gap: 8px; justify-content: center; margin: 8px }
+  .pad button { width: 64px; height: 56px; font-size: 22px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--text) }
+  @media (pointer: coarse) { .pad { display: flex } }
+</style>
+</head>
+<body>
+<header><b>🪙 MQTT 多人搶金幣</b><span>房間 <b id="room"></b></span><span id="srv">伺服器離線</span></header>
+<canvas id="cv" width="800" height="500"></canvas>
+<div id="board">方向鍵 / WASD 移動,吃到金幣 +1</div>
+<div id="best" style="color:var(--muted);font-size:13px"></div>
+<div class="pad"><button data-k="left">◀</button><button data-k="up">▲</button><button data-k="down">▼</button><button data-k="right">▶</button></div>
+
+<script>
+// ====== 1. 設定(房間要跟 server.py 一樣) ======
+const ROOM   = new URLSearchParams(location.search).get("room") || "demo";
+const PREFIX = `pyl-academy/v1/${ROOM}/game/`;
+const myId   = "p-" + Math.random().toString(16).slice(2, 10);
+const myName = localStorage.getItem("game_name") || prompt("玩家名稱?") || "玩家" + Math.floor(Math.random() * 100);
+localStorage.setItem("game_name", myName);
+document.getElementById("room").textContent = ROOM;
+
+// ====== 2. 連線、訂閱:遊戲狀態 + 伺服器在不在 ======
+const client = mqtt.connect("wss://broker.emqx.io:8084/mqtt", { clientId: myId });
+client.on("connect", () => client.subscribe([PREFIX + "state", PREFIX + "server", PREFIX + "leaderboard"]));
+
+let state = null;
+client.on("message", (topic, payload) => {
+  if (topic === PREFIX + "leaderboard") {        // 伺服器存在 SQLite 的歷史最高分
+    const top = JSON.parse(payload.toString());
+    document.getElementById("best").textContent = "📜 歷史最高:" + (top.length ? top.map(([n, s]) => `${n} ${s}`).join(" · ") : "還沒有紀錄,搶第一個金幣吧");
+  } else if (topic === PREFIX + "server") {
+    const on = payload.toString() === "online";
+    const el = document.getElementById("srv");
+    el.textContent = on ? "伺服器上線" : "伺服器離線:請先執行 python server.py " + ROOM;
+    el.classList.toggle("on", on);
+  } else {
+    state = JSON.parse(payload.toString());        // 位置全部聽伺服器的
+  }
+});
+
+// ====== 3. 只送「按了哪些鍵」:按鍵改變時馬上送,沒變也每 0.5 秒送一次讓伺服器知道我還在 ======
+const keys = { up: false, down: false, left: false, right: false };
+const MAP = { ArrowUp: "up", KeyW: "up", ArrowDown: "down", KeyS: "down", ArrowLeft: "left", KeyA: "left", ArrowRight: "right", KeyD: "right" };
+function send() { if (client.connected) client.publish(PREFIX + "input/" + myId, JSON.stringify({ name: myName, ...keys })); }
+function setKey(k, v) { if (k && keys[k] !== v) { keys[k] = v; send(); } }
+addEventListener("keydown", e => { if (MAP[e.code]) { setKey(MAP[e.code], true); e.preventDefault(); } });
+addEventListener("keyup", e => setKey(MAP[e.code], false));
+document.querySelectorAll(".pad button").forEach(b => {
+  b.onpointerdown = () => setKey(b.dataset.k, true);
+  b.onpointerup = b.onpointerleave = () => setKey(b.dataset.k, false);
+});
+setInterval(send, 500);
+
+// ====== 4. 畫面:每一幀畫出最新的 state ======
+const cv = document.getElementById("cv"), g = cv.getContext("2d");
+function draw() {
+  g.clearRect(0, 0, cv.width, cv.height);
+  if (state) {
+    g.fillStyle = "#e8b84a";
+    state.coins.forEach(([x, y]) => { g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2); g.fill(); g.fillStyle = "#7a5a10"; g.font = "bold 11px sans-serif"; g.textAlign = "center"; g.fillText("$", x, y + 4); g.fillStyle = "#e8b84a"; });
+    state.players.forEach(p => {
+      g.fillStyle = p.color; g.beginPath(); g.arc(p.x, p.y, 16, 0, Math.PI * 2); g.fill();
+      if (p.id === myId) { g.strokeStyle = "#fff"; g.lineWidth = 3; g.stroke(); }
+      g.fillStyle = "#f2ede3"; g.font = "14px sans-serif"; g.textAlign = "center";
+      g.fillText(`${p.name} ${p.score}`, p.x, p.y - 22);
+    });
+    const top = [...state.players].sort((a, b) => b.score - a.score).slice(0, 5);
+    document.getElementById("board").textContent = top.length ? "🏆 " + top.map(p => `${p.name} ${p.score}`).join(" · ") : "等玩家加入…";
+  }
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>

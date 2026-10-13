@@ -10,7 +10,7 @@
   // 先套主題,避免閃一下白底
   (function () { try { var t = localStorage.getItem("pyl_theme"); if (!t) t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"; document.documentElement.setAttribute("data-theme", t === "light" ? "light" : "dark"); } catch (e) {} })();
 </script>
-<link rel="stylesheet" href="style.css?v=4ebd9a7f">
+<link rel="stylesheet" href="style.css?v=16e88f7e">
 </head>
 <body>
 <header id="topbar">
@@ -44,11 +44,11 @@
     startup: { typeset: false }
   };
 </script>
-<script>window.PYL_DATA_BASE = "data2/"; window.PYL_MATHJAX = "mathjax-tex-svg.js";</script>
+<script>window.PYL_DATA_BASE = "data2/"; window.PYL_MATHJAX = "mathjax-tex-svg.js"; window.PYL_DEMO_BASE = "demos/";</script>
 <script src="marked.min.js"></script>
 <script src="vendor/highlight.min.js"></script>
 <script src="vendor/powershell.min.js"></script>
-<script src="data2/core.js?v=be8a4255"></script>
-<script src="app.js?v=bf128591"></script>
+<script src="data2/core.js?v=654677c5"></script>
+<script src="app.js?v=29fbe5ca"></script>
 </body>
 </html>

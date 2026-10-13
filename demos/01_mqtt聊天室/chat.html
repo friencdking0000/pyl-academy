@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta name="robots" content="noindex">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MQTT 聊天室</title>
+<!-- mqtt.js:讓瀏覽器用 WebSocket(wss)講 MQTT -->
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<style>
+  :root { --bg: #0c0b0d; --card: #19161b; --line: #2f2933; --text: #f2ede3; --muted: #a99f92; --gold: #e8b84a; --red: #e0283f; --ok: #3fbf7f }
+  * { box-sizing: border-box }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: "Segoe UI", "Noto Sans TC", system-ui, sans-serif }
+  header { padding: 12px 16px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; flex-wrap: wrap }
+  header b { color: var(--gold) }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--red); display: inline-block }
+  .dot.on { background: var(--ok) }
+  main { display: grid; grid-template-columns: 1fr 200px; gap: 12px; padding: 12px 16px; height: calc(100vh - 120px) }
+  #log { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; overflow-y: auto }
+  #log div { margin: 4px 0; line-height: 1.5 }
+  #log .me { color: var(--gold) }
+  #log .sys { color: var(--muted); font-size: 13px }
+  aside { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; overflow-y: auto }
+  aside h4 { margin: 0 0 6px; color: var(--gold); font-size: 14px }
+  form { display: flex; gap: 8px; padding: 0 16px 12px }
+  input { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit }
+  button { padding: 10px 16px; border-radius: 10px; border: 0; background: var(--red); color: #fff; font: inherit; cursor: pointer }
+  @media (max-width: 600px) { main { grid-template-columns: 1fr; grid-template-rows: 1fr 90px } }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span><b>MQTT 聊天室</b>
+  <span>房間 <b id="room"></b></span>
+  <span style="color:var(--muted);font-size:13px">公開測試伺服器 broker.emqx.io,請勿傳個資</span>
+</header>
+<main>
+  <div id="log"></div>
+  <aside><h4>在線 <span id="n">0</span> 人</h4><div id="who"></div></aside>
+</main>
+<form id="f"><input id="msg" placeholder="輸入訊息,按 Enter 送出" autocomplete="off"><button>送出</button></form>
+
+<script>
+// ====== 1. 設定:房間名稱放在網址 ?room=xxx,同一間的人互相看得到 ======
+const ROOM   = new URLSearchParams(location.search).get("room") || "demo";
+const PREFIX = `pyl-academy/v1/${ROOM}/`;          // 所有主題都以這個開頭,跟別人隔開
+const BROKER = "wss://broker.emqx.io:8084/mqtt";   // wss = 加密的 WebSocket
+const myName = localStorage.getItem("chat_name") || prompt("你的暱稱?") || "訪客" + Math.floor(Math.random() * 1000);
+localStorage.setItem("chat_name", myName);
+const myId   = "web-" + Math.random().toString(16).slice(2, 10);
+document.getElementById("room").textContent = ROOM;
+
+// ====== 2. 連線:順便留「遺囑」(will)— 我斷線時 broker 會幫我把在線狀態清掉 ======
+const client = mqtt.connect(BROKER, {
+  clientId: myId,
+  will: { topic: PREFIX + "online/" + myId, payload: "", retain: true },
+});
+
+// ====== 3. 連上後:訂閱聊天與在線名單,並宣告「我上線了」 ======
+client.on("connect", () => {
+  document.getElementById("dot").classList.add("on");
+  client.subscribe(PREFIX + "chat");
+  client.subscribe(PREFIX + "online/+");             // + 是萬用字元:所有人的在線狀態
+  client.publish(PREFIX + "online/" + myId, myName, { retain: true });
+  show("sys", `已連上 broker,進入房間「${ROOM}」`);
+});
+client.on("close", () => document.getElementById("dot").classList.remove("on"));
+
+// ====== 4. 收到訊息:依主題分流 ======
+const online = {};
+client.on("message", (topic, payload) => {
+  const text = payload.toString();
+  if (topic === PREFIX + "chat") {
+    const m = JSON.parse(text);
+    show(m.name === myName ? "me" : "", `${m.name}:${m.text}`);
+  } else if (topic.startsWith(PREFIX + "online/")) {
+    const id = topic.split("/").pop();
+    if (text) online[id] = text; else delete online[id];   // 空字串 = 離線(遺囑或主動清除)
+    const names = Object.values(online);
+    document.getElementById("n").textContent = names.length;
+    document.getElementById("who").innerHTML = names.map(n => `<div>🟢 ${esc(n)}</div>`).join("");
+  }
+});
+
+// ====== 5. 送出:發布到聊天主題,broker 會轉給所有訂閱的人(包含自己) ======
+document.getElementById("f").onsubmit = (e) => {
+  e.preventDefault();
+  const box = document.getElementById("msg");
+  const text = box.value.trim();
+  if (!text || !client.connected) return;
+  client.publish(PREFIX + "chat", JSON.stringify({ name: myName, text, ts: Date.now() }));
+  box.value = "";
+};
+
+// 離開頁面時主動下線(沒來得及的話,遺囑也會處理)
+addEventListener("beforeunload", () => client.publish(PREFIX + "online/" + myId, "", { retain: true }));
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function show(cls, text) {
+  const d = document.createElement("div");
+  d.className = cls; d.textContent = text;                 // 用 textContent,別人傳 HTML 也不會被執行
+  const log = document.getElementById("log");
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+</script>
+</body>
+</html>

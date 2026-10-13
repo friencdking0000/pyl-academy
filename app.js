@@ -298,7 +298,8 @@
       '<section class="stage"><div class="stage-head"><div><div class="crumb"><a href="#/c/' + c.id + '">' + esc(c.title) + "</a> › " + esc(c.steps[si].title) + '</div><div class="fn">' + esc(f.name) + "</div></div>" +
       '<span class="sp"></span>' + (f.lesson.auto ? '<span class="tag auto" title="還沒有逐段講稿,先用程式註解導讀">註解導讀</span>' : '<span class="tag">🎙 旁白講解</span>') +
       (f.runnable ? '<span class="tag run" id="py-tag">▶ 可線上執行</span>' : (f.colab ? '<a class="tag colab" target="_blank" rel="noopener" href="' + COLAB_BASE + f.colab + '" title="用 Google Colab 執行(有 GPU、免安裝)">☁️ 在 Colab 開啟</a>' : '<span class="tag">在 VS Code 執行</span>')) +
-      pairLink(c, si, L, f) + (f.rel ? '<a class="btn line sm" href="' + attr(f.rel) + '" target="_blank">↗ 原檔</a>' : "") + "</div>" +
+      pairLink(c, si, L, f) + (f.demo ? '<a class="btn gold sm" href="' + attr((window.PYL_DEMO_BASE || "demos/") + f.demo) + '?room=demo" target="_blank" rel="noopener" title="開新分頁玩真的示範;網址的 room= 可以改成你們自己的房間名">▶ 開啟示範</a>' : "") +
+      (f.rel ? '<a class="btn line sm" href="' + attr(f.rel) + '" target="_blank">↗ 原檔</a>' : "") + "</div>" +
       '<div class="code focus" id="code">' + lines.map(function (t, i) { return '<div class="ln" data-l="' + (i + 1) + '"><span class="no">' + (i + 1) + '</span><span class="tx">' + (t || " ") + "</span></div>"; }).join("") + "</div>" +
       '<div class="caption"><div class="cap-top"><span class="cap-k">旁白</span><span class="cap-title" id="cap-title"></span><span class="cap-lines" id="cap-lines"></span></div>' +
       '<div class="cap-say" id="cap-say"></div>' +
@@ -370,7 +371,7 @@
   });
   function gotoSeg(i, manual) {
     if (!R || i < 0 || i >= R.segs.length) return;
-    if (manual) stopSpeak();
+    if (manual) { stopSpeak(); R.ttsPos = null; }   // 手動換段:下次從頭念
     R.idx = i;
     var s = R.segs[i], code = $("#code");
     $$(".ln.on", code).forEach(function (x) { x.classList.remove("on"); });
@@ -409,39 +410,47 @@
   }
   if (synth) { pickVoice(); synth.onvoiceschanged = pickVoice; }
   function plain(t) { return String(t || "").replace(/```[\s\S]*?```/g, "").replace(/[`*_#>]/g, "").replace(/\s+/g, " "); }
-  // 朗讀共用:切成短句逐句念(避開 Chrome 長句念到一半斷掉)、定時 resume 保活、沒出聲自動重試一次、失敗明確告知
-  var sayTok = 0, keepAlive = null;
-  function say(text, onend, onfail) {
-    var tok = ++sayTok;
-    var parts = String(text).replace(/([。!?;!?;\n])/g, "$1\u0000").split("\u0000").map(function (x) { return x.trim(); }).filter(Boolean);
+  // 朗讀共用(2026-10-14 修正 Android):
+  // - 只在句號 / 問號 / 驚嘆號斷句(逗號不斷,減少停頓);每句結尾補句號,避免手機語音吃掉最後幾個字
+  // - 不再用 pause()+resume() 保活:Android 的 pause 等於取消,會讓旁白念到一半卡住
+  // - 被系統打斷(interrupted)就重念這一句;onchunk 回報念到第幾句,讓字幕跟著亮、暫停後能接著念
+  var sayTok = 0;
+  function splitSay(text) {
+    var parts = String(text).replace(/([。！？!?\n])/g, "$1\u0000").split("\u0000").map(function (x) { return x.trim(); }).filter(Boolean);
     var chunks = [];
     parts.forEach(function (x) {
-      while (x.length > 110) { chunks.push(x.slice(0, 110)); x = x.slice(110); }
-      if (chunks.length && (chunks[chunks.length - 1] + x).length < 60) chunks[chunks.length - 1] += x; else chunks.push(x);
+      while (x.length > 120) { var cut = x.lastIndexOf("，", 120); if (cut < 40) cut = 119; chunks.push(x.slice(0, cut + 1)); x = x.slice(cut + 1); }
+      if (chunks.length && (chunks[chunks.length - 1] + x).length < 40) chunks[chunks.length - 1] += x; else if (x) chunks.push(x);
     });
-    if (!chunks.length) { onend && onend(); return; }
-    clearInterval(keepAlive);
-    keepAlive = setInterval(function () { if (tok !== sayTok) return clearInterval(keepAlive); try { if (synth.speaking && !synth.paused) { synth.pause(); synth.resume(); } } catch (e) {} }, 9000);
-    var i = 0, retried = false;
+    return chunks.map(function (c) { return /[。！？!?.…]$/.test(c) ? c : c + "。"; });
+  }
+  function say(chunks, from, onend, onfail, onchunk) {
+    if (typeof chunks === "string") chunks = splitSay(chunks);
+    var tok = ++sayTok, i = from || 0, tries = 0;
     function one() {
       if (tok !== sayTok) return;
-      if (i >= chunks.length) { clearInterval(keepAlive); onend && onend(); return; }
-      var u = new SpeechSynthesisUtterance(chunks[i]), started = false;
+      if (i >= chunks.length) { onend && onend(); return; }
+      onchunk && onchunk(i);
+      var u = new SpeechSynthesisUtterance(chunks[i]), started = false, dead = false;
       u.lang = "zh-TW"; if (zhVoice) u.voice = zhVoice; u.rate = +lsGet("pyl_rate", 1);
       u.onstart = function () { started = true; };
-      u.onend = function () { if (tok !== sayTok) return; i++; one(); };
+      u.onend = function () { if (dead || tok !== sayTok) return; dead = true; i++; tries = 0; setTimeout(one, 40); };
       u.onerror = function (e) {
-        if (tok !== sayTok || e.error === "interrupted" || e.error === "canceled") return;
-        clearInterval(keepAlive); onfail && onfail(e.error || "error");
+        if (dead || tok !== sayTok) return;          // 我們自己按停止 / 換段 / 重試造成的,不用管
+        dead = true;
+        if ((e.error === "interrupted" || e.error === "canceled") && tries < 2) { tries++; setTimeout(one, 200); return; }
+        onfail && onfail(e.error || "error");
       };
-      try { if (synth.paused) synth.resume(); synth.speak(u); } catch (e) { onfail && onfail("error"); return; }
-      // 有些 Chrome 在 cancel 後立刻 speak 會靜默吞掉:1.5 秒沒開始就重試一次,再不行就改用字幕模式
+      try { synth.speak(u); } catch (e) { onfail && onfail("error"); return; }
+      // 有些瀏覽器會靜默吞掉:2 秒都沒開始就重念一次,再不行就改用字幕模式
       setTimeout(function () {
-        if (tok !== sayTok || started || synth.speaking) return;
-        if (!retried) { retried = true; try { synth.cancel(); } catch (e) {} setTimeout(one, 120); }
-        else { clearInterval(keepAlive); onfail && onfail("silent"); }
-      }, 1500);
+        if (dead || tok !== sayTok || started || synth.speaking) return;
+        dead = true;
+        if (tries < 1) { tries++; try { synth.cancel(); } catch (e) {} setTimeout(one, 200); }
+        else onfail && onfail("silent");
+      }, 2000);
     }
+    try { if (synth.paused) synth.resume(); } catch (e) {}
     one();
   }
   function voiceLabel(v) { return v.name + "(" + v.lang + (v.localService ? "" : ",線上") + ")"; }
@@ -497,28 +506,38 @@
     "synthesis-unavailable": "🔇 這台裝置沒有可用的語音引擎,先只顯示字幕。",
     "language-unavailable": "🔇 找不到中文語音,先只顯示字幕。可到系統設定加裝「中文(台灣)」語音。"
   };
-  function stopSpeak() { sayTok++; clearInterval(keepAlive); clearTimeout(timer); try { synth && synth.cancel(); } catch (e) {} var cs = $("#cap-say"); if (cs) cs.classList.remove("speaking"); }
+  function stopSpeak() { sayTok++; clearTimeout(timer); try { synth && synth.cancel(); } catch (e) {} var cs = $("#cap-say"); if (cs) cs.classList.remove("speaking"); }
   function play() {
     R.playing = true; $("#b-play").textContent = "⏸";
     ttsNote(voiceOn ? "" : "🔇 目前是靜音模式,只會自動翻字幕。要聽旁白請按右下的 🔇 打開聲音。");
-    speakSeg();
+    var p = R.ttsPos;
+    speakSeg(p && p.idx === R.idx ? p.k : 0);      // 暫停後再播:從剛剛那一句接著念
   }
   function pause() { R.playing = false; stopSpeak(); var b = $("#b-play"); if (b) b.textContent = "▶"; }
-  function speakSeg() {
+  function speakSeg(from) {
     stopSpeak();
-    var s = R.segs[R.idx], text = plain((s.title ? s.title + "。" : "") + s.say), cs = $("#cap-say");
+    var s = R.segs[R.idx], cs = $("#cap-say");
+    var chunks = (s.title ? [s.title + "。"] : []).concat(splitSay(plain(s.say)));
+    var off = s.title ? 1 : 0;                     // 第 0 句是標題,字幕上方已經有,不重複顯示
+    // 字幕改成一句一句,念到哪句亮哪句 → 看得出還在念
+    cs.innerHTML = chunks.slice(off).map(function (c, k) { return '<span class="sent" data-k="' + (k + off) + '">' + esc(c) + "</span>"; }).join("");
+    function mark(k) {
+      R.ttsPos = { idx: R.idx, k: k };
+      $$(".sent", cs).forEach(function (x) { var j = +x.dataset.k; x.classList.toggle("now", j === k); x.classList.toggle("done", j < k); });
+    }
     function next() {
       if (!R || !R.playing) return;
-      if (R.idx < R.segs.length - 1) timer = setTimeout(function () { gotoSeg(R.idx + 1); }, 700); else pause();
+      R.ttsPos = null;
+      if (R.idx < R.segs.length - 1) timer = setTimeout(function () { gotoSeg(R.idx + 1); }, 600); else pause();
     }
     cs.classList.add("speaking");
-    function byTimer() { timer = setTimeout(function () { cs.classList.remove("speaking"); next(); }, Math.max(3500, text.length * 230 / (+lsGet("pyl_rate", 1)))); }
+    function byTimer() { var t = chunks.slice(from || 0).join(""); timer = setTimeout(function () { cs.classList.remove("speaking"); next(); }, Math.max(3500, t.length * 230 / (+lsGet("pyl_rate", 1)))); }
     if (voiceOn && synth && window.SpeechSynthesisUtterance) {
-      say(text, function () { cs.classList.remove("speaking"); next(); }, function (why) {
+      say(chunks, from || 0, function () { cs.classList.remove("speaking"); mark(chunks.length); next(); }, function (why) {
         ttsNote(TTS_MSG[why] || "🔇 朗讀失敗(" + why + "),先只顯示字幕。");
         if (why === "not-allowed") { cs.classList.remove("speaking"); pause(); } else byTimer();
-      });
-    } else byTimer();
+      }, mark);
+    } else { mark(from || 0); byTimer(); }
   }
 
   /* ---- 逐句拆解 + 程式詞彙 ---- */
@@ -716,7 +735,7 @@
   }
 
   /* ---- Pyodide ---- */
-  var BLOCKED = /^\s*(?:import|from)\s+(tkinter|cv2|pygame|socket|threading|aiohttp|flask|psycopg2|ultralytics|tensorflow|mediapipe|discord|requests|dotenv|PIL|serial|asyncio|subprocess)\b/m;
+  var BLOCKED = /^\s*(?:import|from)\s+(tkinter|cv2|pygame|socket|threading|aiohttp|flask|psycopg2|ultralytics|tensorflow|mediapipe|discord|requests|dotenv|PIL|serial|asyncio|subprocess|paho)\b/m;
   function blockedName(code) { var m = String(code).match(BLOCKED); return m ? m[1] : ""; }
   var PY_URL = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/", pyReady = null, pyDone = false;
   function loadPy() {
@@ -813,7 +832,7 @@
       var el = paras[pi++]; el.classList.add("reading"); el.scrollIntoView({ block: "center", behavior: "smooth" });
       var t = plain(el.textContent); if (!t.trim()) return readNext();
       if (!synth) return;
-      say(t, function () { if (reading) readNext(); }, function (why) { reading = false; alert(TTS_MSG[why] || "朗讀失敗(" + why + ")"); });
+      say(splitSay(t), 0, function () { if (reading) readNext(); }, function (why) { reading = false; alert(TTS_MSG[why] || "朗讀失敗(" + why + ")"); });
     }
     $("#rd-play").onclick = function () {
       if (!synth) { alert("這個瀏覽器不支援朗讀"); return; }
