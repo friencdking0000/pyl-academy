@@ -71,8 +71,9 @@ const online = {};
 client.on("message", (topic, payload) => {
   const text = payload.toString();
   if (topic === PREFIX + "chat") {
-    const m = JSON.parse(text);
-    show(m.name === myName ? "me" : "", `${m.name}:${m.text}`);
+    let m;
+    try { m = JSON.parse(text); } catch (e) { return; }      // 別人亂送的不是 JSON → 跳過
+    show(m.id === myId ? "me" : "", `${m.name}:${m.text}`);  // 用 ID 判斷是不是自己(同名也分得出來)
   } else if (topic.startsWith(PREFIX + "online/")) {
     const id = topic.split("/").pop();
     if (text) online[id] = text; else delete online[id];   // 空字串 = 離線(遺囑或主動清除)
@@ -88,7 +89,7 @@ document.getElementById("f").onsubmit = (e) => {
   const box = document.getElementById("msg");
   const text = box.value.trim();
   if (!text || !client.connected) return;
-  client.publish(PREFIX + "chat", JSON.stringify({ name: myName, text, ts: Date.now() }));
+  client.publish(PREFIX + "chat", JSON.stringify({ id: myId, name: myName, text, ts: Date.now() }));
   box.value = "";
 };
 

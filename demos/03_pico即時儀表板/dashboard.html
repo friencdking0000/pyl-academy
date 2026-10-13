@@ -46,11 +46,13 @@ client.on("connect", () => client.subscribe([PREFIX + "+/imu", PREFIX + "+/statu
 
 client.on("message", (topic, payload) => {
   const [dev, kind] = topic.slice(PREFIX.length).split("/");
+  if (!/^[\w-]{1,32}$/.test(dev)) return;        // 裝置名稱是別人取的:只收英數字,防網頁注入
   const d = devices[dev] || (devices[dev] = { online: true, data: [] });
   if (kind === "status") d.online = payload.toString() === "online";
   else {
     d.online = true;
-    d.data.push(JSON.parse(payload.toString()));
+    let v; try { v = JSON.parse(payload.toString()); } catch (e) { return; }
+    d.data.push(v);
     if (d.data.length > N) d.data.shift();       // 只留最近 N 筆,記憶體不會一直長
     if (!selected) selected = dev;
   }

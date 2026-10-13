@@ -44,7 +44,7 @@ client.on("connect", () => client.subscribe([PREFIX + "state", PREFIX + "server"
 let state = null;
 client.on("message", (topic, payload) => {
   if (topic === PREFIX + "leaderboard") {        // 伺服器存在 SQLite 的歷史最高分
-    const top = JSON.parse(payload.toString());
+    let top; try { top = JSON.parse(payload.toString()); } catch (e) { return; }
     document.getElementById("best").textContent = "📜 歷史最高:" + (top.length ? top.map(([n, s]) => `${n} ${s}`).join(" · ") : "還沒有紀錄,搶第一個金幣吧");
   } else if (topic === PREFIX + "server") {
     const on = payload.toString() === "online";
@@ -52,7 +52,7 @@ client.on("message", (topic, payload) => {
     el.textContent = on ? "伺服器上線" : "伺服器離線:請先執行 python server.py " + ROOM;
     el.classList.toggle("on", on);
   } else {
-    state = JSON.parse(payload.toString());        // 位置全部聽伺服器的
+    try { state = JSON.parse(payload.toString()); } catch (e) { }   // 位置全部聽伺服器的;壞資料就沿用上一筆
   }
 });
 

@@ -431,3 +431,17 @@ a.tag.colab:hover { background: var(--gold); color: #1a1205 }
 .cap-say .sent { transition: color .2s, background .2s; border-radius: 4px }
 .cap-say .sent.done { opacity: .6 }
 .cap-say .sent.now { color: var(--gold-ink); background: var(--gold-soft) }
+
+/* 用意 + 名詞小抄 + 聽不懂 */
+.cap-why { font-size: 14.5px; line-height: 1.6; margin: 4px 0 6px; padding: 6px 10px; border-radius: 8px; background: var(--gold-soft); border-left: 3px solid var(--gold); transition: box-shadow .2s }
+.cap-why b { color: var(--gold-ink) }
+.cap-why.now { box-shadow: 0 0 0 2px var(--gold) }
+.wt { border-bottom: 1.5px dashed var(--gold); cursor: help }
+.wt:hover, .wt:focus { background: var(--gold-soft); outline: none }
+.cap-term { display: none; font-size: 13.5px; margin: 6px 0 2px; padding: 6px 10px; border-radius: 8px; background: var(--surface2); border: 1px solid var(--line) }
+.cap-term.show { display: block }
+.cap-term a { margin-left: 6px; font-size: 12.5px }
+.icon-btn.huh { font-size: 18px }
+.cap-tts.ok { background: var(--ok-soft); color: var(--ok) }
+.cap-say .sent, .cap-why { cursor: pointer }
+.cap-say .sent:hover, .cap-why:hover { background: var(--hl) }

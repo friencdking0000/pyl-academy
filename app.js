@@ -279,7 +279,7 @@
   var COLAB_BASE = "https://colab.research.google.com/github/friencdking0000/pyl-academy/blob/main/notebooks/";
   function buildSegs(f) {
     var L = f.lesson, segs = [];
-    segs.push({ kind: "intro", title: "開場", say: L.intro || "這堂課要讀「" + f.name + "」。我們會一段一段看,每段先聽講解,再到右邊動手改改看。" });
+    segs.push({ kind: "intro", title: "開場", why: L.why || "", wterms: L.wterms || [], say: L.intro || "這堂課要讀「" + f.name + "」。我們會一段一段看,每段先聽講解,再到右邊動手改改看。" });
     L.segments.forEach(function (s) { segs.push(s); });
     segs.push({ kind: "recap", title: "小結", say: L.recap || "這支程式看完了!記得在 VS Code 自己跑一次,看看終端機的結果跟你想的一不一樣。" });
     return segs;
@@ -302,11 +302,11 @@
       (f.rel ? '<a class="btn line sm" href="' + attr(f.rel) + '" target="_blank">↗ 原檔</a>' : "") + "</div>" +
       '<div class="code focus" id="code">' + lines.map(function (t, i) { return '<div class="ln" data-l="' + (i + 1) + '"><span class="no">' + (i + 1) + '</span><span class="tx">' + (t || " ") + "</span></div>"; }).join("") + "</div>" +
       '<div class="caption"><div class="cap-top"><span class="cap-k">旁白</span><span class="cap-title" id="cap-title"></span><span class="cap-lines" id="cap-lines"></span></div>' +
-      '<div class="cap-say" id="cap-say"></div>' +
+      '<div class="cap-why" id="cap-why"></div><div class="cap-say" id="cap-say"></div><div class="cap-term" id="cap-term"></div>' +
       '<div class="cap-ctrl"><button class="icon-btn" id="b-prev" title="上一段 (←)">◀</button><button class="icon-btn play" id="b-play" title="自動播放並朗讀 (空白鍵)">▶</button><button class="icon-btn" id="b-next" title="下一段 (→)">▶▶</button>' +
       '<div class="dots" id="dots">' + R.segs.map(function (_, i) { return '<i data-i="' + i + '"' + (i <= st.seen ? ' class="seen"' : "") + "></i>"; }).join("") + "</div>" +
       '<select class="rate" id="rate" title="語速"><option value="0.85">慢</option><option value="1" selected>中</option><option value="1.2">快</option></select>' +
-      '<button class="icon-btn" id="b-voice" title="朗讀開關">🔊</button><button class="icon-btn" id="b-vset" title="聲音設定 / 測試(沒聲音按這裡)">⚙</button><button class="icon-btn" id="b-ops" title="操作面板">🛠</button></div></div></section>' +
+      '<button class="icon-btn" id="b-voice" title="朗讀開關">🔊</button><button class="icon-btn" id="b-vset" title="聲音設定 / 測試(沒聲音按這裡)">⚙</button><button class="icon-btn huh" id="b-huh" title="聽不懂?幫你問 ChatGPT">🤔</button><button class="icon-btn" id="b-ops" title="操作面板">🛠</button></div></div></section>' +
       '<aside class="ops" id="ops"><div class="ops-grip"><span>🛠 操作面板</span><button class="icon-btn" id="ops-close">✕</button></div>' +
       '<div class="ops-tabs"><button data-t="do" class="on">動手做</button>' + (f.bd && f.bd.length ? '<button data-t="bd">🔍 拆解</button>' : "") + '<button data-t="run">編輯執行</button><button data-t="read">課文</button><button data-t="ai">問 AI</button>' + (f.diff || f.fixedPath ? '<button data-t="diff">對照</button>' : "") + '</div><div class="ops-body" id="ops-body"></div></aside></div>';
     bindRoom();
@@ -353,6 +353,25 @@
     $("#rate").onchange = function () { lsSet("pyl_rate", +this.value); };
     $("#b-ops").onclick = function () { $("#ops").classList.toggle("open"); };
     $("#b-vset").onclick = function () { if (R.playing) pause(); openVoicePanel(); };
+    $("#b-huh").onclick = function () { askGpt(this); };
+    $(".caption").addEventListener("click", function (e) {
+      var w = e.target.closest(".wt");
+      if (w) {                                      // 點名詞:顯示小抄,不重播
+        var box = $("#cap-term");
+        box.innerHTML = "📖 <b>" + esc(w.dataset.t) + "</b>:" + esc(w.dataset.d) +
+          ' <a href="https://www.google.com/search?q=' + encodeURIComponent(w.dataset.t + " 是什麼 白話") + '" target="_blank" rel="noopener">Google 一下 ↗</a>';
+        box.classList.add("show");
+        return;
+      }
+      if (e.target.closest("a")) return;
+      var sn = e.target.closest(".sent, .cap-why");  // 點一句(或用意):從那裡開始念,念完照常往下
+      if (!sn) return;
+      var k = sn.classList.contains("cap-why") ? R.whyK : +sn.dataset.k;
+      if (k < 0) return;
+      R.playing = true; $("#b-play").textContent = "⏸";
+      ttsNote(voiceOn ? "" : "🔇 目前是靜音模式,只會自動翻字幕。要聽旁白請按右下的 🔇 打開聲音。");
+      speakSeg(k);
+    });
     $("#ops-close").onclick = function () { $("#ops").classList.remove("open"); };
     $(".ops-tabs").onclick = function (e) { var b = e.target.closest("button"); if (!b) return; R.opsTab = b.dataset.t; renderOps(); };
     $("#code").onclick = function (e) {
@@ -383,13 +402,65 @@
     } else code.classList.remove("focus");
     $("#cap-title").textContent = s.title || "";
     $("#cap-lines").textContent = s.lines ? "第 " + s.lines[0] + (s.lines[1] !== s.lines[0] ? "–" + s.lines[1] : "") + " 行 · " + i + "/" + (R.segs.length - 2) : (s.kind === "intro" ? "開場" : "小結");
-    $("#cap-say").innerHTML = inl(s.say || "");
+    renderCaption(s);
     $$("#dots i").forEach(function (d, k) { d.classList.toggle("on", k === i); if (k <= i) d.classList.add("seen"); });
     var st = lessonState(R.f.path); st.seen = Math.max(st.seen || 0, i);
     if (i === R.segs.length - 1 && !st.done) { st.done = true; saveLesson(R.f.path, st); checkStepDone(); refreshOutline(); }
     else saveLesson(R.f.path, st);
     renderOps();
     if (R.playing) speakSeg();
+  }
+  // ---- 用意 + 名詞小抄 ----
+  function termsOf(s) { return (s.wterms || []).filter(function (t) { return t && t.t && t.d; }); }
+  function markTerms(html, terms, used) {
+    terms.forEach(function (t) {
+      if (used[t.t]) return;
+      var key = esc(t.t), i = html.indexOf(key);
+      if (i < 0) return;
+      // 不要畫到 HTML 標籤裡面
+      var lt = html.lastIndexOf("<", i), gt = html.lastIndexOf(">", i);
+      if (lt > gt) return;
+      used[t.t] = 1;
+      html = html.slice(0, i) + '<span class="wt" tabindex="0" data-t="' + attr(t.t) + '" data-d="' + attr(t.d) + '">' + key + "</span>" + html.slice(i + key.length);
+    });
+    return html;
+  }
+  // 一段旁白要念的句子:標題 → 用意 → 旁白逐句(off 之前的在字幕上方已經顯示)
+  function segChunks(s) {
+    var pre = (s.title ? [s.title + "。"] : []).concat(s.why ? ["用意:" + plain(s.why).replace(/[。]?$/, "。")] : []);
+    return { chunks: pre.concat(splitSay(plain(s.say))), off: pre.length, whyK: s.why ? pre.length - 1 : -1 };
+  }
+  function renderCaption(s) {
+    var used = {}, terms = termsOf(s), sc = segChunks(s);
+    R.whyK = sc.whyK;
+    var cw = $("#cap-why");
+    cw.innerHTML = s.why ? "💡 <b>用意</b>:" + markTerms(esc(s.why), terms, used) : "";
+    cw.style.display = s.why ? "" : "none";
+    cw.classList.remove("now");
+    // 一進來就分好句:每一句都可以點,從那句開始念
+    $("#cap-say").innerHTML = sc.chunks.slice(sc.off).map(function (c, k) {
+      return '<span class="sent" data-k="' + (k + sc.off) + '" title="點一下:從這句開始念">' + markTerms(esc(c), terms, used) + "</span>";
+    }).join("");
+    var ct = $("#cap-term"); ct.classList.remove("show"); ct.innerHTML = "";
+  }
+  // ---- 聽不懂?把這段整理成新手提問,複製並打開 ChatGPT ----
+  function askGpt(btn) {
+    var s = R.segs[R.idx], f = R.f;
+    var code = s.lines ? segCode(s) : f.content.slice(0, 1200);
+    if (code.length > 1500) code = code.slice(0, 1500) + "\n…(後面省略)";
+    var t = "我是完全沒學過程式的新手,正在看「" + R.c.title + " › " + R.c.steps[R.si].title + "」的 " + f.name + "。\n" +
+      "請用很白話、像在教國中生的方式幫我:\n" +
+      "1. 先用一句話說這段程式的「用意」(為什麼要寫它、學它能做什麼)\n" +
+      "2. 再一行一行解釋;遇到專有名詞先用生活比喻解釋\n" +
+      "3. 如果裡面拿某個東西當例子(例如數學公式、遊戲規則),直接告訴我「這只是例子、不懂也沒關係」,並說重點是什麼\n" +
+      "4. 最後出一題很簡單的小練習給我\n\n" +
+      "【這段在講】" + (s.title || "") + "\n" + (s.why ? "用意:" + plain(s.why) + "\n" : "") + plain(s.say) + "\n\n" +
+      "【程式碼】\n" + code;
+    copyText(t);
+    var url = "https://chatgpt.com/?q=" + encodeURIComponent(t);
+    window.open(url.length < 7000 ? url : "https://chatgpt.com/", "_blank", "noopener");
+    ttsNote("📋 提問已複製,正在打開 ChatGPT。沒有自動帶入的話,在輸入框按「貼上」(Ctrl+V)就好。");
+    var n = $("#cap-tts"); if (n) { n.classList.add("ok"); setTimeout(function () { ttsNote(""); n.classList.remove("ok"); }, 6000); }
   }
   function checkStepDone() {
     var all = R.L.every(function (f) { return lessonState(f.path).done; });
@@ -517,13 +588,11 @@
   function speakSeg(from) {
     stopSpeak();
     var s = R.segs[R.idx], cs = $("#cap-say");
-    var chunks = (s.title ? [s.title + "。"] : []).concat(splitSay(plain(s.say)));
-    var off = s.title ? 1 : 0;                     // 第 0 句是標題,字幕上方已經有,不重複顯示
-    // 字幕改成一句一句,念到哪句亮哪句 → 看得出還在念
-    cs.innerHTML = chunks.slice(off).map(function (c, k) { return '<span class="sent" data-k="' + (k + off) + '">' + esc(c) + "</span>"; }).join("");
+    var sc = segChunks(s), chunks = sc.chunks, whyK = sc.whyK;   // 字幕已由 renderCaption 分好句,這裡只負責念、亮
     function mark(k) {
       R.ttsPos = { idx: R.idx, k: k };
       $$(".sent", cs).forEach(function (x) { var j = +x.dataset.k; x.classList.toggle("now", j === k); x.classList.toggle("done", j < k); });
+      var cw = $("#cap-why"); if (cw) cw.classList.toggle("now", k === whyK);
     }
     function next() {
       if (!R || !R.playing) return;
