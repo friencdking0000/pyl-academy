@@ -305,7 +305,7 @@
       '<div class="cap-ctrl"><button class="icon-btn" id="b-prev" title="上一段 (←)">◀</button><button class="icon-btn play" id="b-play" title="自動播放並朗讀 (空白鍵)">▶</button><button class="icon-btn" id="b-next" title="下一段 (→)">▶▶</button>' +
       '<div class="dots" id="dots">' + R.segs.map(function (_, i) { return '<i data-i="' + i + '"' + (i <= st.seen ? ' class="seen"' : "") + "></i>"; }).join("") + "</div>" +
       '<select class="rate" id="rate" title="語速"><option value="0.85">慢</option><option value="1" selected>中</option><option value="1.2">快</option></select>' +
-      '<button class="icon-btn" id="b-voice" title="朗讀開關">🔊</button><button class="icon-btn" id="b-ops" title="操作面板">🛠</button></div></div></section>' +
+      '<button class="icon-btn" id="b-voice" title="朗讀開關">🔊</button><button class="icon-btn" id="b-vset" title="聲音設定 / 測試(沒聲音按這裡)">⚙</button><button class="icon-btn" id="b-ops" title="操作面板">🛠</button></div></div></section>' +
       '<aside class="ops" id="ops"><div class="ops-grip"><span>🛠 操作面板</span><button class="icon-btn" id="ops-close">✕</button></div>' +
       '<div class="ops-tabs"><button data-t="do" class="on">動手做</button>' + (f.bd && f.bd.length ? '<button data-t="bd">🔍 拆解</button>' : "") + '<button data-t="run">編輯執行</button><button data-t="read">課文</button><button data-t="ai">問 AI</button>' + (f.diff || f.fixedPath ? '<button data-t="diff">對照</button>' : "") + '</div><div class="ops-body" id="ops-body"></div></aside></div>';
     bindRoom();
@@ -351,6 +351,7 @@
     $("#rate").value = String(lsGet("pyl_rate", 1));
     $("#rate").onchange = function () { lsSet("pyl_rate", +this.value); };
     $("#b-ops").onclick = function () { $("#ops").classList.toggle("open"); };
+    $("#b-vset").onclick = function () { if (R.playing) pause(); openVoicePanel(); };
     $("#ops-close").onclick = function () { $("#ops").classList.remove("open"); };
     $(".ops-tabs").onclick = function (e) { var b = e.target.closest("button"); if (!b) return; R.opsTab = b.dataset.t; renderOps(); };
     $("#code").onclick = function (e) {
@@ -400,7 +401,8 @@
   var synth = window.speechSynthesis, zhVoice = null, timer = null;
   function pickVoice() {
     if (!synth) return null;
-    var vs = synth.getVoices();
+    var vs = synth.getVoices(), want = lsGet("pyl_voice_name", "");
+    if (want) { var w = vs.filter(function (v) { return v.name === want; })[0]; if (w) return (zhVoice = w); }
     zhVoice = vs.filter(function (v) { return /zh[-_]TW/i.test(v.lang); }).sort(function (a, b) { return (/Natural|Online/.test(b.name) ? 1 : 0) - (/Natural|Online/.test(a.name) ? 1 : 0); })[0] ||
       vs.filter(function (v) { return /^zh/i.test(v.lang); })[0] || null;
     return zhVoice;
@@ -441,6 +443,48 @@
       }, 1500);
     }
     one();
+  }
+  function voiceLabel(v) { return v.name + "(" + v.lang + (v.localService ? "" : ",線上") + ")"; }
+  function openVoicePanel() {
+    var old = $("#vpanel"); if (old) old.remove();
+    var vs = synth ? synth.getVoices() : [], zh = vs.filter(function (v) { return /^(zh|cmn|yue)/i.test(v.lang); });
+    var want = lsGet("pyl_voice_name", ""), ua = navigator.userAgent;
+    var br = /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : /Firefox\//.test(ua) ? "Firefox" : "其他";
+    var os = /iPhone|iPad/.test(ua) ? "iPhone/iPad" : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Mac/.test(ua) ? "Mac" : "其他";
+    var el = document.createElement("div"); el.id = "vpanel"; el.className = "vpanel";
+    el.innerHTML = '<div class="vp-in"><div class="vp-h"><b>🔊 聲音設定與測試</b><button class="icon-btn" id="vp-x">✕</button></div>' +
+      '<div class="vp-info">瀏覽器:<b>' + br + "</b> · 系統:<b>" + os + "</b> · 朗讀功能:<b>" + (synth ? "有" : "❌ 不支援") + "</b> · 中文語音:<b>" + zh.length + "</b> 個(全部 " + vs.length + " 個)</div>" +
+      '<label class="vp-l">念旁白用的聲音</label><select id="vp-voice"><option value="">自動選(目前:' + esc(zhVoice ? voiceLabel(zhVoice) : "找不到中文語音") + ")</option>" +
+      (zh.length ? '<optgroup label="中文">' + zh.map(function (v) { return '<option value="' + attr(v.name) + '"' + (v.name === want ? " selected" : "") + ">" + esc(voiceLabel(v)) + "</option>"; }).join("") + "</optgroup>" : "") +
+      '<optgroup label="其他語言(念中文可能沒聲音)">' + vs.filter(function (v) { return zh.indexOf(v) < 0; }).map(function (v) { return '<option value="' + attr(v.name) + '"' + (v.name === want ? " selected" : "") + ">" + esc(voiceLabel(v)) + "</option>"; }).join("") + "</optgroup></select>" +
+      '<div class="row"><button class="btn red sm" id="vp-test">▶ 播放測試句</button><button class="btn line sm" id="vp-copy">📋 複製檢測結果</button></div>' +
+      '<pre class="vp-log" id="vp-log">按「播放測試句」,這裡會記錄發生什麼事。</pre>' +
+      '<div class="vp-tips"><b>還是沒聲音?依序試試:</b><ol>' +
+      "<li>電腦 / 手機音量、這個分頁有沒有被靜音(分頁上的喇叭圖示)。</li>" +
+      "<li><b>iPhone:側邊靜音開關打開時,網頁朗讀會完全沒聲音</b>,請切回有聲。</li>" +
+      "<li>上面換一個中文語音再測;標「線上」的要能連網,學校網路有時會擋。</li>" +
+      "<li>Windows 沒有中文語音:設定 → 時間與語言 → 語音 → 新增語音 →「中文(台灣)」。</li>" +
+      "<li>換 Edge 瀏覽器試試(內建最多中文語音)。</li></ol></div></div>";
+    document.body.appendChild(el);
+    var log = $("#vp-log", el), t0 = 0, lines = [];
+    function L(m) { lines.push(((performance.now() - t0) / 1000).toFixed(1) + "s " + m); log.textContent = lines.join("\n"); }
+    $("#vp-x", el).onclick = function () { el.remove(); };
+    el.onclick = function (e) { if (e.target === el) el.remove(); };
+    $("#vp-voice", el).onchange = function () { lsSet("pyl_voice_name", this.value); zhVoice = null; pickVoice(); };
+    $("#vp-copy", el).onclick = function () { copyText($(".vp-info", el).textContent + "\n聲音:" + (zhVoice ? voiceLabel(zhVoice) : "無") + "\n" + log.textContent, this); };
+    $("#vp-test", el).onclick = function () {
+      lines = []; t0 = performance.now();
+      if (!synth) { L("❌ 這個瀏覽器沒有朗讀功能"); return; }
+      try { synth.cancel(); if (synth.paused) synth.resume(); } catch (e) {}
+      var u = new SpeechSynthesisUtterance("你好,這是 pyl Academy 的旁白測試。聽得到的話,旁白就沒問題。"), started = false;
+      u.lang = "zh-TW"; if (zhVoice) u.voice = zhVoice; u.rate = +lsGet("pyl_rate", 1); u.volume = 1;
+      L("送出朗讀,聲音 = " + (zhVoice ? voiceLabel(zhVoice) : "未指定(讓瀏覽器自己找 zh-TW)"));
+      u.onstart = function () { started = true; L("✅ 開始念了(如果這時還是聽不到 → 是音量/輸出裝置/靜音開關的問題,或換一個聲音)"); };
+      u.onend = function () { L("✅ 念完"); };
+      u.onerror = function (e) { L("❌ 錯誤:" + e.error + " → " + (TTS_MSG[e.error] || "換一個聲音或瀏覽器再試")); };
+      synth.speak(u);
+      setTimeout(function () { if (!started) L("⚠️ 3 秒了還沒開始(speaking=" + synth.speaking + ", pending=" + synth.pending + ")→ 這個聲音可能壞了或要連網,請換一個再測"); }, 3000);
+    };
   }
   function ttsNote(msg) {
     var n = $("#cap-tts");
@@ -753,7 +797,7 @@
     var L = lessonsOf(s), prev = si > 0 ? stepHref(c, si - 1) : null, next = si < c.steps.length - 1 ? stepHref(c, si + 1) : null;
     main.innerHTML = '<div class="reader"><article class="paper"><div class="muted" style="font-size:12.5px;margin-bottom:10px"><a href="#/c/' + c.id + '">' + esc(c.title) + "</a> › 課文</div>" +
       '<div class="md" id="rd">' + md(n.content) + "</div>" + (n.rel ? '<p class="muted" style="font-size:12.5px;border-top:1px solid var(--line);padding-top:12px;margin-top:30px">📄 來源:<a href="' + attr(n.rel) + '" target="_blank">' + esc(n.path) + "</a></p>" : "") + "</article>" +
-      '<aside class="reader-side"><div class="op-card"><h4>🔊 朗讀課文</h4><p class="muted" style="font-size:13px">一段一段唸,唸到哪一段會亮起來;可隨時暫停。</p><div class="row"><button class="btn red sm" id="rd-play">▶ 開始朗讀</button><button class="btn line sm" id="rd-stop">■ 停止</button></div></div>' +
+      '<aside class="reader-side"><div class="op-card"><h4>🔊 朗讀課文</h4><p class="muted" style="font-size:13px">一段一段唸,唸到哪一段會亮起來;可隨時暫停。</p><div class="row"><button class="btn red sm" id="rd-play">▶ 開始朗讀</button><button class="btn line sm" id="rd-stop">■ 停止</button><button class="btn line sm" id="rd-vset">⚙ 沒聲音?</button></div></div>' +
       (L.length ? '<div class="op-card"><h4>🎬 本章程式課</h4>' + L.map(function (f, k) { return '<a class="o-item" href="#/learn/' + c.id + "/" + si + "/" + k + '"><span class="ck">' + (lessonState(f.path).done ? "✓" : "○") + "</span>" + esc(f.name) + "</a>"; }).join("") + "</div>" : "") +
       (s.problems && s.problems.length ? '<a class="btn gold" href="#/practice/' + c.id + "/step" + si + '">🎯 本章練習 ' + s.problems.length + " 題</a>" : "") +
       '<label class="op-card" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="rd-done"' + (isDone(c.id, si) ? " checked" : "") + "> 這一章我讀完了</label>" +
@@ -776,6 +820,7 @@
       paras = $$("h2, h3, h4, p, li, blockquote > p", rd).filter(function (el) { return !el.closest("pre") && !el.closest("table"); });
       stopSpeak(); reading = true; readNext();
     };
+    $("#rd-vset").onclick = openVoicePanel;
     $("#rd-stop").onclick = function () { reading = false; stopSpeak(); $$(".reading", rd).forEach(function (x) { x.classList.remove("reading"); }); };
   }
   function enhanceCode(root) {
