@@ -449,7 +449,7 @@
     var old = $("#vpanel"); if (old) old.remove();
     var vs = synth ? synth.getVoices() : [], zh = vs.filter(function (v) { return /^(zh|cmn|yue)/i.test(v.lang); });
     var want = lsGet("pyl_voice_name", ""), ua = navigator.userAgent;
-    var br = /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : /Firefox\//.test(ua) ? "Firefox" : "其他";
+    var br = / Line\//i.test(ua) ? "LINE 內建瀏覽器(不支援朗讀,請改用 Chrome / Safari)" : /FBAN|FBAV|Instagram/i.test(ua) ? "App 內建瀏覽器(不支援朗讀)" : /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : /Firefox\//.test(ua) ? "Firefox" : "其他";
     var os = /iPhone|iPad/.test(ua) ? "iPhone/iPad" : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Mac/.test(ua) ? "Mac" : "其他";
     var el = document.createElement("div"); el.id = "vpanel"; el.className = "vpanel";
     el.innerHTML = '<div class="vp-in"><div class="vp-h"><b>🔊 聲音設定與測試</b><button class="icon-btn" id="vp-x">✕</button></div>' +
@@ -1024,5 +1024,17 @@
   });
   main.addEventListener("click", function (e) { if (e.target.closest(".results a")) search.value = ""; });
 
+  // LINE / FB / IG 的內建瀏覽器不支援朗讀:提示改用手機瀏覽器開(LINE 可用 openExternalBrowser=1 直接跳出去)
+  (function () {
+    var ua = navigator.userAgent, isLine = / Line\//i.test(ua), inApp = isLine || /FBAN|FBAV|Instagram|Messenger/i.test(ua);
+    if (!inApp || lsGet("pyl_inapp_ok", false)) return;
+    var ext = location.origin + location.pathname + "?openExternalBrowser=1" + location.hash;
+    var b = document.createElement("div"); b.className = "inapp-bar";
+    b.innerHTML = "<span>📢 你在 " + (isLine ? "LINE" : "App") + " 裡開啟,這裡<b>旁白不會有聲音</b>、執行程式也比較慢。</span>" +
+      (isLine ? '<a class="btn gold sm" href="' + attr(ext) + '">用瀏覽器開啟</a>' : '<span class="muted">請按右上「⋯」→ 用瀏覽器開啟</span>') +
+      '<button class="icon-btn" title="不再提醒">✕</button>';
+    b.querySelector("button").onclick = function () { lsSet("pyl_inapp_ok", true); b.remove(); };
+    document.body.insertBefore(b, document.body.firstChild);
+  })();
   route();
 })();
