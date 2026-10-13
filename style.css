@@ -404,3 +404,12 @@ table.tests td, table.tests th { border: 1px solid var(--line); padding: 5px 8px
   .w-table .bt-n, .w-table .w-files { grid-column: 1 / -1 }
   .w-tools { top: 52px }
 }
+
+/* 朗讀狀態提示 */
+.cap-tts { font-size: 13px; margin: 6px 0 2px; padding: 6px 10px; border-radius: 8px; background: var(--red-soft); color: var(--red-ink) }
+.loading-page { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 40vh; color: var(--muted); font-size: 15px }
+.spin { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--gold); animation: spin .8s linear infinite }
+@keyframes spin { to { transform: rotate(360deg) } }
+.tag.run.ready { background: var(--ok-soft); border-color: var(--ok) }
+a.tag.colab { text-decoration: none; background: var(--gold-soft); border-color: var(--gold); color: var(--gold-ink); font-weight: 700 }
+a.tag.colab:hover { background: var(--gold); color: #1a1205 }

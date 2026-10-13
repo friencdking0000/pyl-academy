@@ -25,7 +25,54 @@
     return html.replace(/@@MATH(\d+)@@/g, function (_, i) { return esc(maths[+i]); });
   }
   function inl(t) { return md(t).replace(/^<p>|<\/p>\s*$/g, ""); }
-  function typeset(el) { try { if (el && window.MathJax && MathJax.typesetPromise) return MathJax.typesetPromise([el]).catch(function () {}); } catch (e) {} return Promise.resolve(); }
+  // MathJax(670KB)只有內容裡真的有公式才下載
+  var mathP = null;
+  function loadMath() {
+    if (mathP) return mathP;
+    mathP = new Promise(function (res) {
+      var sc = document.createElement("script"); sc.src = window.PYL_MATHJAX || "mathjax-tex-svg.js"; sc.async = true;
+      sc.onload = function () { (window.MathJax && MathJax.startup && MathJax.startup.promise || Promise.resolve()).then(res, res); };
+      sc.onerror = function () { res(); };
+      document.head.appendChild(sc);
+    });
+    return mathP;
+  }
+  function typeset(el) {
+    if (!el || !/\$[^$\s]|\\\(|\\\[/.test(el.textContent || "")) return Promise.resolve();
+    return loadMath().then(function () { try { if (window.MathJax && MathJax.typesetPromise) return MathJax.typesetPromise([el]).catch(function () {}); } catch (e) {} });
+  }
+
+  /* ---------- 分檔載入:開站只有目錄,課程內容點進去才下載 ---------- */
+  var DATA_BASE = window.PYL_DATA_BASE || "", chunkP = {};
+  function idle(fn) { (window.requestIdleCallback || function (f) { return setTimeout(f, 1200); })(fn); }
+  function loadChunk(id) {
+    if (chunkP[id]) return chunkP[id];
+    return (chunkP[id] = new Promise(function (res, rej) {
+      var sc = document.createElement("script"); sc.src = DATA_BASE + encodeURIComponent(id) + ".js?v=" + (D.ver || "");
+      sc.onload = function () { res(); };
+      sc.onerror = function () { delete chunkP[id]; rej(new Error("載入失敗")); };
+      document.head.appendChild(sc);
+    }));
+  }
+  window.PYL_CHUNK = function (id, ch) {
+    if (id === "_terms") { D.pyterms = ch.pyterms || {}; D.pykinds = ch.pykinds; KINDS = (ch.pykinds && ch.pykinds.kinds) || []; TERMS = D.pyterms; return; }
+    var c = byId(id); if (!c || !c._lite) return;
+    (c.notes || []).forEach(function (n, i) { n.content = ch.notes[i] || ""; });
+    c.steps.forEach(function (st, si) {
+      st.problems = ch.problems[si] || [];
+      (st.code || []).forEach(function (f) { var b = ch.code[f.path]; if (b) for (var k in b) f[k] = b[k]; });
+    });
+    c._lite = false;
+  };
+  function ensure(cid) {
+    var c = byId(cid); if (!c) return Promise.resolve();
+    var ps = [];
+    if (c._lite) ps.push(loadChunk(cid));
+    if (hasBd(c) && !KINDS.length && D.nkinds) ps.push(loadChunk("_terms"));
+    return Promise.all(ps);
+  }
+  function ensureAll() { return Promise.all(D.courses.map(function (c) { return ensure(c.id); })); }
+  function segN(f) { return f.lesson.segments ? f.lesson.segments.length : (f.lesson.n || 0); }
   function byId(id) { for (var i = 0; i < D.courses.length; i++) if (D.courses[i].id === id) return D.courses[i]; return null; }
   function copyText(t, btn) {
     function ok() { if (btn) { var o = btn.textContent; btn.textContent = "✔ 已複製"; setTimeout(function () { btn.textContent = o; }, 1300); } }
@@ -90,6 +137,17 @@
     document.body.classList.remove("in-room");
     main.classList.remove("full");
     var h = location.hash || "#/", m, r = "home";
+    var need = h.match(/^#\/(?:learn|read|practice|quiz|words|c)\/([^/]+)/);
+    if (need) {
+      var nc = byId(decodeURIComponent(need[1]));
+      if (nc && (nc._lite && !/^#\/c\//.test(h) || /^#\/words\//.test(h) && hasBd(nc) && !KINDS.length && D.nkinds)) {
+        main.innerHTML = '<div class="loading-page"><div class="spin"></div>載入「' + esc(nc.title) + '」課程內容…</div>';
+        ensure(nc.id).then(function () { if (location.hash === h) route(); }, function () {
+          main.innerHTML = '<div class="loading-page">❌ 課程內容載入失敗,請檢查網路後<a href="javascript:location.reload()">重新整理</a></div>';
+        });
+        return;
+      }
+    }
     if ((m = h.match(/^#\/learn\/([^/]+)\/(\d+)\/(\d+)/))) { r = "courses"; renderRoom(decodeURIComponent(m[1]), +m[2], +m[3]); }
     else if ((m = h.match(/^#\/read\/([^/]+)\/(\d+)/))) { r = "courses"; renderRead(decodeURIComponent(m[1]), +m[2]); }
     else if ((m = h.match(/^#\/practice\/([^/]+)(?:\/(.+))?/))) { r = "courses"; renderPractice(decodeURIComponent(m[1]), m[2] ? decodeURIComponent(m[2]) : ""); }
@@ -145,6 +203,8 @@
     }).join("") + "</div>";
     h += '<div class="sec-h"><h2>全部課程</h2></div>' + courseGrid();
     main.innerHTML = h;
+    var lm = last && /#\/\w+\/([^/]+)/.exec(last.href);
+    idle(function () { ensure(lm ? decodeURIComponent(lm[1]) : "PY-BASIC").catch(function () {}); });
   }
   function courseGrid() {
     return '<div class="course-grid">' + D.courses.map(function (c, k) {
@@ -169,14 +229,14 @@
       (np ? '<a class="btn line" href="#/practice/' + c.id + '">🎯 練習題(' + np + ")</a>" : "") +
       (c.quiz ? '<a class="btn line" href="#/quiz/' + c.id + '">❓ 章末測驗</a>' : "") +
       (hasBd(c) ? '<a class="btn line" href="#/words/' + c.id + '">📖 程式詞彙</a>' : "") + "</div>" +
-      (hasBd(c) ? '<a class="kinds-cta" href="#/words/' + c.id + '"><b>🧭 第一次看程式?</b><span>先認識程式裡的 ' + KINDS.length + ' 種詞:變數、運算子、內建函式…每種都有白話、例子和提醒</span></a>' : "") +
+      (hasBd(c) ? '<a class="kinds-cta" href="#/words/' + c.id + '"><b>🧭 第一次看程式?</b><span>先認識程式裡的 ' + (D.nkinds || KINDS.length) + ' 種詞:變數、運算子、內建函式…每種都有白話、例子和提醒</span></a>' : "") +
       (c.todo ? '<p class="muted" style="font-size:12.5px;margin-top:14px">⚠️ ' + esc(c.todo) + "</p>" : "") + "</aside><div>";
     h += c.steps.map(function (s, i) {
       var L = lessonsOf(s), exam = s.title.indexOf("📝") === 0, d = dayOf(s.title);
       var cards = L.map(function (f, k) {
         var st = lessonState(f.path);
         return '<a class="lcard' + (st.done ? " done" : "") + '" href="#/learn/' + c.id + "/" + i + "/" + k + '"><span class="li">' + (st.done ? "✅" : "🎬") + "</span><div><b>" + esc(f.name) + "</b>" + fixBadge(f) + "<span>" +
-          f.lesson.segments.length + " 段" + (f.lesson.auto ? " · 註解導讀" : " · 旁白講解") + (f.runnable ? " · 可線上跑" : "") + "</span></div></a>";
+          segN(f) + " 段" + (f.lesson.auto ? " · 註解導讀" : " · 旁白講解") + (f.runnable ? " · 可線上跑" : f.colab ? " · ☁️ Colab" : "") + "</span></div></a>";
       }).join("");
       if (s.noteIndex >= 0) cards += '<a class="lcard read" href="#/read/' + c.id + "/" + i + '"><span class="li">📘</span><div><b>課文</b><span>可朗讀 · 約 ' + s.minutes + " 分</span></div></a>";
       if (s.problems && s.problems.length) cards += '<a class="lcard prac" href="#/practice/' + c.id + "/step" + i + '"><span class="li">🎯</span><div><b>練習 ' + s.problems.length + " 題</b><span>提示 · 詳解 · 線上提交</span></div></a>";
@@ -186,6 +246,7 @@
         '<div class="ch-body">' + cards + "</div></section>";
     }).join("") + "</div></div>";
     main.innerHTML = h;
+    idle(function () { ensure(cid).catch(function () {}); });
     main.onclick = function (e) {
       var head = e.target.closest(".ch-head"); if (head && !e.target.closest("label")) head.parentNode.classList.toggle("closed");
     };
@@ -215,6 +276,7 @@
     return f.content.split("\n").map(esc);
   }
   var R = null;   // 目前教室狀態
+  var COLAB_BASE = "https://colab.research.google.com/github/friencdking0000/pyl-academy/blob/main/notebooks/";
   function buildSegs(f) {
     var L = f.lesson, segs = [];
     segs.push({ kind: "intro", title: "開場", say: L.intro || "這堂課要讀「" + f.name + "」。我們會一段一段看,每段先聽講解,再到右邊動手改改看。" });
@@ -235,7 +297,7 @@
     main.innerHTML = '<div class="room">' + outlineHtml(c, si, k) +
       '<section class="stage"><div class="stage-head"><div><div class="crumb"><a href="#/c/' + c.id + '">' + esc(c.title) + "</a> › " + esc(c.steps[si].title) + '</div><div class="fn">' + esc(f.name) + "</div></div>" +
       '<span class="sp"></span>' + (f.lesson.auto ? '<span class="tag auto" title="還沒有逐段講稿,先用程式註解導讀">註解導讀</span>' : '<span class="tag">🎙 旁白講解</span>') +
-      (f.runnable ? '<span class="tag run">▶ 可線上執行</span>' : '<span class="tag">在 VS Code 執行</span>') +
+      (f.runnable ? '<span class="tag run" id="py-tag">▶ 可線上執行</span>' : (f.colab ? '<a class="tag colab" target="_blank" rel="noopener" href="' + COLAB_BASE + f.colab + '" title="用 Google Colab 執行(有 GPU、免安裝)">☁️ 在 Colab 開啟</a>' : '<span class="tag">在 VS Code 執行</span>')) +
       pairLink(c, si, L, f) + (f.rel ? '<a class="btn line sm" href="' + attr(f.rel) + '" target="_blank">↗ 原檔</a>' : "") + "</div>" +
       '<div class="code focus" id="code">' + lines.map(function (t, i) { return '<div class="ln" data-l="' + (i + 1) + '"><span class="no">' + (i + 1) + '</span><span class="tx">' + (t || " ") + "</span></div>"; }).join("") + "</div>" +
       '<div class="caption"><div class="cap-top"><span class="cap-k">旁白</span><span class="cap-title" id="cap-title"></span><span class="cap-lines" id="cap-lines"></span></div>' +
@@ -248,6 +310,7 @@
       '<div class="ops-tabs"><button data-t="do" class="on">動手做</button>' + (f.bd && f.bd.length ? '<button data-t="bd">🔍 拆解</button>' : "") + '<button data-t="run">編輯執行</button><button data-t="read">課文</button><button data-t="ai">問 AI</button>' + (f.diff || f.fixedPath ? '<button data-t="diff">對照</button>' : "") + '</div><div class="ops-body" id="ops-body"></div></aside></div>';
     bindRoom();
     gotoSeg(0);
+    if (f.runnable) preheat(f.content);
   }
   function pairLink(c, si, L, f) {
     var other = f.fixedPath || f.origPath; if (!other) return "";
@@ -280,7 +343,11 @@
     $("#b-play").onclick = function () { R.playing ? pause() : play(); };
     $("#dots").onclick = function (e) { var d = e.target.closest("i"); if (d) gotoSeg(+d.dataset.i, true); };
     $("#b-voice").textContent = voiceOn ? "🔊" : "🔇";
-    $("#b-voice").onclick = function () { voiceOn = !voiceOn; lsSet("pyl_voice", voiceOn); this.textContent = voiceOn ? "🔊" : "🔇"; if (!voiceOn) stopSpeak(); };
+    $("#b-voice").onclick = function () {
+      voiceOn = !voiceOn; lsSet("pyl_voice", voiceOn); this.textContent = voiceOn ? "🔊" : "🔇";
+      ttsNote(voiceOn ? "" : "🔇 已靜音:只顯示字幕。");
+      stopSpeak(); if (R.playing) speakSeg();
+    };
     $("#rate").value = String(lsGet("pyl_rate", 1));
     $("#rate").onchange = function () { lsSet("pyl_rate", +this.value); };
     $("#b-ops").onclick = function () { $("#ops").classList.toggle("open"); };
@@ -340,8 +407,58 @@
   }
   if (synth) { pickVoice(); synth.onvoiceschanged = pickVoice; }
   function plain(t) { return String(t || "").replace(/```[\s\S]*?```/g, "").replace(/[`*_#>]/g, "").replace(/\s+/g, " "); }
-  function stopSpeak() { clearTimeout(timer); try { synth && synth.cancel(); } catch (e) {} var cs = $("#cap-say"); if (cs) cs.classList.remove("speaking"); }
-  function play() { R.playing = true; $("#b-play").textContent = "⏸"; speakSeg(); }
+  // 朗讀共用:切成短句逐句念(避開 Chrome 長句念到一半斷掉)、定時 resume 保活、沒出聲自動重試一次、失敗明確告知
+  var sayTok = 0, keepAlive = null;
+  function say(text, onend, onfail) {
+    var tok = ++sayTok;
+    var parts = String(text).replace(/([。!?;!?;\n])/g, "$1\u0000").split("\u0000").map(function (x) { return x.trim(); }).filter(Boolean);
+    var chunks = [];
+    parts.forEach(function (x) {
+      while (x.length > 110) { chunks.push(x.slice(0, 110)); x = x.slice(110); }
+      if (chunks.length && (chunks[chunks.length - 1] + x).length < 60) chunks[chunks.length - 1] += x; else chunks.push(x);
+    });
+    if (!chunks.length) { onend && onend(); return; }
+    clearInterval(keepAlive);
+    keepAlive = setInterval(function () { if (tok !== sayTok) return clearInterval(keepAlive); try { if (synth.speaking && !synth.paused) { synth.pause(); synth.resume(); } } catch (e) {} }, 9000);
+    var i = 0, retried = false;
+    function one() {
+      if (tok !== sayTok) return;
+      if (i >= chunks.length) { clearInterval(keepAlive); onend && onend(); return; }
+      var u = new SpeechSynthesisUtterance(chunks[i]), started = false;
+      u.lang = "zh-TW"; if (zhVoice) u.voice = zhVoice; u.rate = +lsGet("pyl_rate", 1);
+      u.onstart = function () { started = true; };
+      u.onend = function () { if (tok !== sayTok) return; i++; one(); };
+      u.onerror = function (e) {
+        if (tok !== sayTok || e.error === "interrupted" || e.error === "canceled") return;
+        clearInterval(keepAlive); onfail && onfail(e.error || "error");
+      };
+      try { if (synth.paused) synth.resume(); synth.speak(u); } catch (e) { onfail && onfail("error"); return; }
+      // 有些 Chrome 在 cancel 後立刻 speak 會靜默吞掉:1.5 秒沒開始就重試一次,再不行就改用字幕模式
+      setTimeout(function () {
+        if (tok !== sayTok || started || synth.speaking) return;
+        if (!retried) { retried = true; try { synth.cancel(); } catch (e) {} setTimeout(one, 120); }
+        else { clearInterval(keepAlive); onfail && onfail("silent"); }
+      }, 1500);
+    }
+    one();
+  }
+  function ttsNote(msg) {
+    var n = $("#cap-tts");
+    if (!n) { var cs = $("#cap-say"); if (!cs) return; n = document.createElement("div"); n.id = "cap-tts"; n.className = "cap-tts"; cs.parentNode.insertBefore(n, cs.nextSibling); }
+    n.innerHTML = msg || ""; n.style.display = msg ? "" : "none";
+  }
+  var TTS_MSG = {
+    "not-allowed": "🔇 瀏覽器擋住了自動朗讀,請再按一次 ▶(要直接點按鈕才會出聲)",
+    "silent": "🔇 這台裝置的語音沒有出聲。請確認音量、或換 Edge / Chrome;目前先只顯示字幕。",
+    "synthesis-unavailable": "🔇 這台裝置沒有可用的語音引擎,先只顯示字幕。",
+    "language-unavailable": "🔇 找不到中文語音,先只顯示字幕。可到系統設定加裝「中文(台灣)」語音。"
+  };
+  function stopSpeak() { sayTok++; clearInterval(keepAlive); clearTimeout(timer); try { synth && synth.cancel(); } catch (e) {} var cs = $("#cap-say"); if (cs) cs.classList.remove("speaking"); }
+  function play() {
+    R.playing = true; $("#b-play").textContent = "⏸";
+    ttsNote(voiceOn ? "" : "🔇 目前是靜音模式,只會自動翻字幕。要聽旁白請按右下的 🔇 打開聲音。");
+    speakSeg();
+  }
   function pause() { R.playing = false; stopSpeak(); var b = $("#b-play"); if (b) b.textContent = "▶"; }
   function speakSeg() {
     stopSpeak();
@@ -351,15 +468,13 @@
       if (R.idx < R.segs.length - 1) timer = setTimeout(function () { gotoSeg(R.idx + 1); }, 700); else pause();
     }
     cs.classList.add("speaking");
+    function byTimer() { timer = setTimeout(function () { cs.classList.remove("speaking"); next(); }, Math.max(3500, text.length * 230 / (+lsGet("pyl_rate", 1)))); }
     if (voiceOn && synth && window.SpeechSynthesisUtterance) {
-      var u = new SpeechSynthesisUtterance(text);
-      u.lang = "zh-TW"; if (zhVoice) u.voice = zhVoice; u.rate = +lsGet("pyl_rate", 1);
-      u.onend = function () { cs.classList.remove("speaking"); next(); };
-      u.onerror = function () { cs.classList.remove("speaking"); };
-      synth.speak(u);
-    } else {
-      timer = setTimeout(function () { cs.classList.remove("speaking"); next(); }, Math.max(3500, text.length * 230 / (+lsGet("pyl_rate", 1))));
-    }
+      say(text, function () { cs.classList.remove("speaking"); next(); }, function (why) {
+        ttsNote(TTS_MSG[why] || "🔇 朗讀失敗(" + why + "),先只顯示字幕。");
+        if (why === "not-allowed") { cs.classList.remove("speaking"); pause(); } else byTimer();
+      });
+    } else byTimer();
   }
 
   /* ---- 逐句拆解 + 程式詞彙 ---- */
@@ -367,7 +482,7 @@
   function kindOf(k) { for (var i = 0; i < KINDS.length; i++) if (KINDS[i].kind === k) return KINDS[i]; return null; }
   function kindChip(k) { var K = kindOf(k); return '<span class="kchip" data-kind="' + attr(k || "") + '" title="' + attr(K ? K.def : "") + '">' + (K ? K.icon + " " : "") + esc(k || "") + "</span>"; }
   function termLabel(key) { var m = key.match(/^html:(.*)$/); return m ? "<" + m[1] + ">" : key.replace(/^(css|js|ino):/, ""); }
-  function hasBd(c) { return c.steps.some(function (st) { return (st.code || []).some(function (f) { return f.bd && f.bd.length; }); }); }
+  function hasBd(c) { return c.steps.some(function (st) { return (st.code || []).some(function (f) { return f.hasBd || (f.bd && f.bd.length); }); }); }
   function kindsGuideHtml(open) {
     if (!KINDS.length) return "";
     return '<details class="kinds"' + (open ? " open" : "") + '><summary>🧭 先看懂:程式裡的詞分成哪幾種?</summary><p class="kinds-intro">' + esc(D.pykinds.intro || "") + '</p><div class="kgrid">' +
@@ -460,7 +575,7 @@
           (nx ? '<a class="btn gold" href="' + nx.href + '">下一堂:' + esc(nx.title) + " →</a>" : '<a class="btn gold" href="#/c/' + R.c.id + '">回課程</a>') + "</div>";
         if (R.c.steps[R.si].problems && R.c.steps[R.si].problems.length) h += '<div class="op-card"><h4>🎯 趁熱練習</h4><p>這一章有 ' + R.c.steps[R.si].problems.length + " 題練習(含線上提交)。</p><a class=\"btn line sm\" href=\"#/practice/" + R.c.id + "/step" + R.si + '">去練習</a></div>';
       }
-      if (s.kind === "intro") h += '<div class="op-card"><h4>怎麼上這堂課</h4><p>按 ▶ 自動播放旁白(會朗讀),或用 ◀ ▶▶ 一段一段看。點左邊程式的任一行,會跳到講那一行的段落。</p><p class="muted" style="font-size:13px">' + (f.runnable ? "這支程式可以直接在瀏覽器執行 → 「編輯執行」分頁。" : "這支程式要在 VS Code 執行:<code>python " + esc(f.name.split("/").pop()) + "</code>") + "</p></div>";
+      if (s.kind === "intro") h += '<div class="op-card"><h4>怎麼上這堂課</h4><p>按 ▶ 自動播放旁白(會朗讀),或用 ◀ ▶▶ 一段一段看。點左邊程式的任一行,會跳到講那一行的段落。</p><p class="muted" style="font-size:13px">' + (f.runnable ? "這支程式可以直接在瀏覽器執行 → 「編輯執行」分頁。" : f.colab ? "這支用到 OpenCV / AI 套件,瀏覽器跑不動:按上方「☁️ 在 Colab 開啟」用 Google Colab 直接執行(免安裝,有 GPU);也可以在 VS Code 執行 <code>python " + esc(f.name.split("/").pop()) + "</code>" : "這支程式要在 VS Code 執行:<code>python " + esc(f.name.split("/").pop()) + "</code>") + "</p></div>";
       if (s.try) {
         h += '<div class="op-card"><h4>🧪 試試看</h4><p>' + inl(s.try.hint || "改改看這段") + '</p><div class="diff"><del>' + esc(s.try.from) + "</del>\n<ins>" + esc(s.try.to) + "</ins></div>" +
           '<div class="row"><button class="btn gold sm" id="b-try">' + (f.runnable ? "套用並執行" : "套用修改") + '</button><button class="btn line sm" id="b-tryc">📋 複製修改後程式</button></div><pre class="console" id="try-out"></pre><div class="out-imgs" id="try-img"></div></div>';
@@ -559,12 +674,12 @@
   /* ---- Pyodide ---- */
   var BLOCKED = /^\s*(?:import|from)\s+(tkinter|cv2|pygame|socket|threading|aiohttp|flask|psycopg2|ultralytics|tensorflow|mediapipe|discord|requests|dotenv|PIL|serial|asyncio|subprocess)\b/m;
   function blockedName(code) { var m = String(code).match(BLOCKED); return m ? m[1] : ""; }
-  var PY_URL = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/", pyReady = null;
+  var PY_URL = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/", pyReady = null, pyDone = false;
   function loadPy() {
     if (pyReady) return pyReady;
     pyReady = new Promise(function (res, rej) {
       var s = document.createElement("script"); s.src = PY_URL + "pyodide.js";
-      s.onload = function () { window.loadPyodide({ indexURL: PY_URL }).then(res, rej); };
+      s.onload = function () { window.loadPyodide({ indexURL: PY_URL }).then(function (py) { pyDone = true; res(py); }, rej); };
       s.onerror = function () { pyReady = null; rej(new Error("無法載入 Pyodide(需要連網)")); };
       document.head.appendChild(s);
     });
@@ -578,13 +693,36 @@
   var HARNESS = ["import json as _j", "_res = []", "for _t in _pyl_tests:", "    try:", "        _got = repr(eval(_t['call'], globals()))",
     "        _res.append({'call': _t['call'], 'expect': _t['expect'], 'got': _got, 'ok': _got == _t['expect']})",
     "    except Exception as _e:", "        _res.append({'call': _t['call'], 'expect': _t['expect'], 'got': type(_e).__name__ + ': ' + str(_e), 'ok': False})", "_j.dumps(_res)"].join("\n");
+  // 預熱:進到可執行的課就在背景先把 Python(與用到的套件)載好;省流量模式 / 2G 不預熱
+  function pyBadge(state) {
+    var t = $("#py-tag"); if (!t) return;
+    t.textContent = state === "loading" ? "⏳ 背景準備 Python…" : state === "ready" ? "▶ 可線上執行 · 已就緒" : "▶ 可線上執行";
+    t.classList.toggle("ready", state === "ready");
+  }
+  function preheat(code) {
+    var cn = navigator.connection;
+    if (cn && (cn.saveData || /2g/.test(cn.effectiveType || ""))) return;
+    if (pyDone) { pyBadge("ready"); return; }
+    idle(function () {
+      pyBadge("loading");
+      loadPy().then(function (py) { return py.loadPackagesFromImports(code || ""); })
+        .then(function () { pyBadge("ready"); }, function () { pyBadge(""); });
+    });
+  }
   function runPython(code, ui, tests) {
     var b = blockedName(code);
     ui.out.classList.remove("err");
     if (b) { ui.out.textContent = "⚠️ 這段程式用到「" + b + "」,瀏覽器無法執行(需要視窗、攝影機或網路)。請在 VS Code 終端機執行。"; return Promise.resolve(null); }
-    ui.out.textContent = pyReady ? "⏳ 執行中…" : "⏳ 第一次執行要下載 Python 環境(約 10MB),請稍候…";
+    var t0 = Date.now(), tick = null;
+    if (pyDone) ui.out.textContent = "⏳ 執行中…";
+    else {
+      var msg = function () { return "⏳ 第一次執行要先下載 Python(約 5MB,之後會記在瀏覽器裡)… 已等 " + Math.round((Date.now() - t0) / 1000) + " 秒"; };
+      ui.out.textContent = msg();
+      tick = setInterval(function () { if (pyDone) { clearInterval(tick); ui.out.textContent = "⏳ 執行中…"; } else ui.out.textContent = msg(); }, 1000);
+    }
     if (ui.imgs) ui.imgs.innerHTML = "";
     return loadPy().then(function (py) {
+      clearInterval(tick);
       var buf = [];
       py.setStdout({ batched: function (s) { buf.push(s); } }); py.setStderr({ batched: function (s) { buf.push(s); } });
       window.__pylImg = function (b64) { if (!ui.imgs) return; var im = document.createElement("img"); im.src = "data:image/png;base64," + b64; ui.imgs.appendChild(im); };
@@ -602,7 +740,7 @@
           ui.out.classList.add("err");
           return tests && tests.length ? [] : null;
         }).finally(function () { ns.destroy && ns.destroy(); });
-    }, function (err) { ui.out.textContent = "❌ " + err.message; return null; });
+    }, function (err) { clearInterval(tick); ui.out.textContent = "❌ " + err.message; return null; });
   }
   window.PYL = { runPython: runPython };
 
@@ -631,9 +769,7 @@
       var el = paras[pi++]; el.classList.add("reading"); el.scrollIntoView({ block: "center", behavior: "smooth" });
       var t = plain(el.textContent); if (!t.trim()) return readNext();
       if (!synth) return;
-      var u = new SpeechSynthesisUtterance(t); u.lang = "zh-TW"; if (zhVoice) u.voice = zhVoice; u.rate = +lsGet("pyl_rate", 1);
-      u.onend = function () { if (reading) readNext(); };
-      synth.speak(u);
+      say(t, function () { if (reading) readNext(); }, function (why) { reading = false; alert(TTS_MSG[why] || "朗讀失敗(" + why + ")"); });
     }
     $("#rd-play").onclick = function () {
       if (!synth) { alert("這個瀏覽器不支援朗讀"); return; }
@@ -709,6 +845,7 @@
     main.onchange = function (e) { var g = e.target.closest("[data-got]"); if (!g) return; markGot(c, g.closest(".prob"), g.checked); sum(); };
     main.onclick = function (e) { probClick(e, c, sum); };
     enhanceCode(main);
+    if (allProblems(c).some(function (x) { return x.p.tests && x.p.tests.length; })) preheat("");
     typeset(main).then(function () { annotateTerms(main, c); if (focus && !stepOnly) { var el = document.getElementById("p-" + focus); if (el) { el.scrollIntoView({ block: "start" }); el.classList.add("flash"); } } });
   }
   function probCard(c, p, si) {
@@ -819,6 +956,11 @@
   search.addEventListener("input", function () {
     var q = search.value.trim().toLowerCase();
     if (q.length < 2) { route(); return; }
+    if (D.courses.some(function (c) { return c._lite; })) {
+      main.innerHTML = '<div class="loading-page"><div class="spin"></div>第一次搜尋:載入全部課程內容…</div>';
+      ensureAll().then(function () { search.dispatchEvent(new Event("input")); });
+      return;
+    }
     if (!sidx) {
       sidx = [];
       D.courses.forEach(function (c) {
