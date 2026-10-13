@@ -94,6 +94,7 @@
     else if ((m = h.match(/^#\/read\/([^/]+)\/(\d+)/))) { r = "courses"; renderRead(decodeURIComponent(m[1]), +m[2]); }
     else if ((m = h.match(/^#\/practice\/([^/]+)(?:\/(.+))?/))) { r = "courses"; renderPractice(decodeURIComponent(m[1]), m[2] ? decodeURIComponent(m[2]) : ""); }
     else if ((m = h.match(/^#\/quiz\/([^/]+)/))) { r = "courses"; renderQuiz(decodeURIComponent(m[1])); }
+    else if ((m = h.match(/^#\/words\/([^/]+)/))) { r = "courses"; renderWords(decodeURIComponent(m[1])); }
     else if ((m = h.match(/^#\/c\/([^/]+)/))) { r = "courses"; renderCourse(decodeURIComponent(m[1])); }
     else if (/^#\/courses/.test(h)) { r = "courses"; renderCourses(); }
     else if (/^#\/lc/.test(h)) { r = "lc"; renderLC(); }
@@ -166,7 +167,9 @@
       '<div class="bar"><i style="width:' + p.pct + '%"></i></div><div class="muted" style="font-size:12.5px;margin-top:4px">完成 ' + p.done + " / " + p.total + " 章</div>" +
       '<div class="acts"><a class="btn gold" href="' + stepHref(c, firstTodo(c)) + '">▶ ' + (p.done ? "繼續" : "開始") + "上課</a>" +
       (np ? '<a class="btn line" href="#/practice/' + c.id + '">🎯 練習題(' + np + ")</a>" : "") +
-      (c.quiz ? '<a class="btn line" href="#/quiz/' + c.id + '">❓ 章末測驗</a>' : "") + "</div>" +
+      (c.quiz ? '<a class="btn line" href="#/quiz/' + c.id + '">❓ 章末測驗</a>' : "") +
+      (hasBd(c) ? '<a class="btn line" href="#/words/' + c.id + '">📖 程式詞彙</a>' : "") + "</div>" +
+      (hasBd(c) ? '<a class="kinds-cta" href="#/words/' + c.id + '"><b>🧭 第一次看程式?</b><span>先認識程式裡的 ' + KINDS.length + ' 種詞:變數、運算子、內建函式…每種都有白話、例子和提醒</span></a>' : "") +
       (c.todo ? '<p class="muted" style="font-size:12.5px;margin-top:14px">⚠️ ' + esc(c.todo) + "</p>" : "") + "</aside><div>";
     h += c.steps.map(function (s, i) {
       var L = lessonsOf(s), exam = s.title.indexOf("📝") === 0, d = dayOf(s.title);
@@ -228,6 +231,7 @@
     lsSet(LASTKEY, { href: location.hash, title: f.name, sub: c.title + " › " + c.steps[si].title });
     main.classList.add("full"); document.body.classList.add("in-room");
     var lines = codeLines(f);
+    R.hl = lines;
     main.innerHTML = '<div class="room">' + outlineHtml(c, si, k) +
       '<section class="stage"><div class="stage-head"><div><div class="crumb"><a href="#/c/' + c.id + '">' + esc(c.title) + "</a> › " + esc(c.steps[si].title) + '</div><div class="fn">' + esc(f.name) + "</div></div>" +
       '<span class="sp"></span>' + (f.lesson.auto ? '<span class="tag auto" title="還沒有逐段講稿,先用程式註解導讀">註解導讀</span>' : '<span class="tag">🎙 旁白講解</span>') +
@@ -241,7 +245,7 @@
       '<select class="rate" id="rate" title="語速"><option value="0.85">慢</option><option value="1" selected>中</option><option value="1.2">快</option></select>' +
       '<button class="icon-btn" id="b-voice" title="朗讀開關">🔊</button><button class="icon-btn" id="b-ops" title="操作面板">🛠</button></div></div></section>' +
       '<aside class="ops" id="ops"><div class="ops-grip"><span>🛠 操作面板</span><button class="icon-btn" id="ops-close">✕</button></div>' +
-      '<div class="ops-tabs"><button data-t="do" class="on">動手做</button><button data-t="run">編輯執行</button><button data-t="read">課文</button><button data-t="ai">問 AI</button>' + (f.diff || f.fixedPath ? '<button data-t="diff">對照</button>' : "") + '</div><div class="ops-body" id="ops-body"></div></aside></div>';
+      '<div class="ops-tabs"><button data-t="do" class="on">動手做</button>' + (f.bd && f.bd.length ? '<button data-t="bd">🔍 拆解</button>' : "") + '<button data-t="run">編輯執行</button><button data-t="read">課文</button><button data-t="ai">問 AI</button>' + (f.diff || f.fixedPath ? '<button data-t="diff">對照</button>' : "") + '</div><div class="ops-body" id="ops-body"></div></aside></div>';
     bindRoom();
     gotoSeg(0);
   }
@@ -285,7 +289,9 @@
     $("#code").onclick = function (e) {
       var ln = e.target.closest(".ln"); if (!ln) return;
       var l = +ln.dataset.l;
+      if (e.target.closest(".no") && R.f.bd && R.f.bd.length) { R.bdLine = l; R.opsTab = "bd"; $("#ops").classList.add("open"); }
       for (var i = 0; i < R.segs.length; i++) { var s = R.segs[i]; if (s.lines && l >= s.lines[0] && l <= s.lines[1]) { gotoSeg(i, true); return; } }
+      if (R.bdLine) renderOps();
     };
   }
   document.addEventListener("keydown", function (e) {
@@ -356,6 +362,92 @@
     }
   }
 
+  /* ---- 逐句拆解 + 程式詞彙 ---- */
+  var KINDS = (D.pykinds && D.pykinds.kinds) || [], TERMS = D.pyterms || {};
+  function kindOf(k) { for (var i = 0; i < KINDS.length; i++) if (KINDS[i].kind === k) return KINDS[i]; return null; }
+  function kindChip(k) { var K = kindOf(k); return '<span class="kchip" data-kind="' + attr(k || "") + '" title="' + attr(K ? K.def : "") + '">' + (K ? K.icon + " " : "") + esc(k || "") + "</span>"; }
+  function termLabel(key) { var m = key.match(/^html:(.*)$/); return m ? "<" + m[1] + ">" : key.replace(/^(css|js|ino):/, ""); }
+  function hasBd(c) { return c.steps.some(function (st) { return (st.code || []).some(function (f) { return f.bd && f.bd.length; }); }); }
+  function kindsGuideHtml(open) {
+    if (!KINDS.length) return "";
+    return '<details class="kinds"' + (open ? " open" : "") + '><summary>🧭 先看懂:程式裡的詞分成哪幾種?</summary><p class="kinds-intro">' + esc(D.pykinds.intro || "") + '</p><div class="kgrid">' +
+      KINDS.map(function (K) {
+        return '<div class="kcard" id="k-' + attr(K.kind) + '"><div class="kh"><span>' + K.icon + "</span><b>" + esc(K.kind) + "</b></div><p>" + esc(K.def) + "</p>" +
+          '<div class="kex"><code>' + esc(K.ex) + "</code><span>" + esc(K.exPlain || "") + "</span></div>" + (K.tip ? '<div class="ktip">💡 ' + esc(K.tip) + "</div>" : "") + "</div>";
+      }).join("") + "</div></details>";
+  }
+  function showKind(kind, scope) {
+    var card = document.getElementById("k-" + kind); if (!card) return;
+    card.closest("details").open = true;
+    card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    card.classList.add("flash"); setTimeout(function () { card.classList.remove("flash"); }, 1400);
+  }
+  function bdRows(e) {
+    var rows = (e.terms || []).map(function (t) { return [t.s, t.kind, t.name, ""]; });
+    (e.auto || []).forEach(function (k) { var T = TERMS[k]; if (T) rows.push([termLabel(k), T.kind, T.name, T.ex || ""]); });
+    return rows;
+  }
+  function termsTable(rows) {
+    return rows.length ? '<table class="bd-terms"><tbody>' + rows.map(function (r) {
+      return '<tr><td class="bt-s"><code>' + esc(r[0]) + '</code></td><td class="bt-k">' + kindChip(r[1]) + '</td><td class="bt-n">' + esc(r[2]) +
+        (r[3] ? '<div class="bt-ex">例:' + esc(r[3]) + "</div>" : "") + "</td></tr>";
+    }).join("") + "</tbody></table>" : "";
+  }
+  function sentenceHtml(e) {
+    var a = e.ln[0], b = e.ln[1];
+    return '<div class="bd-s' + (e.bug ? " bug" : "") + '" data-a="' + a + '" data-b="' + b + '"><div class="bd-ln">第 ' + a + (b > a ? "–" + b : "") + " 行</div>" +
+      '<pre class="bd-code">' + R.hl.slice(a - 1, b).join("\n") + "</pre>" +
+      '<div class="bd-plain">💬 ' + inl(e.plain || "") + "</div>" + (e.bug ? '<div class="bd-bug">⚠️ ' + inl(e.bug) + "</div>" : "") + termsTable(bdRows(e)) + "</div>";
+  }
+  function renderWords(cid) {
+    var c = byId(cid); if (!c) return renderHome();
+    var map = {}, order = [];
+    function add(key, s, kind, name, ex, href, fname, general) {
+      var m = map[key];
+      if (!m) { m = map[key] = { s: s, kind: kind, defs: [], files: [], fset: {}, general: general ? 1 : 0 }; order.push(key); }
+      if (name && !m.defs.some(function (d) { return d.name === name; })) m.defs.push({ name: name, ex: ex, fname: general ? "" : fname });
+      if (!m.fset[href]) { m.fset[href] = 1; m.files.push({ href: href, name: fname }); }
+    }
+    c.steps.forEach(function (st, si) {
+      lessonsOf(st).forEach(function (f, k) {
+        var href = "#/learn/" + c.id + "/" + si + "/" + k, fname = f.name.split("/").pop();
+        (f.bd || []).forEach(function (e) {
+          (e.terms || []).forEach(function (t) { add(t.kind + "|" + t.s, t.s, t.kind, t.name, "", href, fname, false); });
+          (e.auto || []).forEach(function (key) { var T = TERMS[key]; if (T) add("@" + key, termLabel(key), T.kind, T.name, T.ex || "", href, fname, true); });
+        });
+      });
+    });
+    var ko = {}; KINDS.forEach(function (K, i) { ko[K.kind] = i; });
+    order.sort(function (a, b) {
+      var A = map[a], B = map[b];
+      return ((ko[A.kind] || 99) - (ko[B.kind] || 99)) || (B.general - A.general) || (B.files.length - A.files.length) || (A.s < B.s ? -1 : A.s > B.s ? 1 : 0);
+    });
+    var cnt = {}; order.forEach(function (k) { cnt[map[k].kind] = (cnt[map[k].kind] || 0) + 1; });
+    var h = '<div class="words"><div class="muted" style="font-size:12.5px"><a href="#/c/' + c.id + '">' + esc(c.title) + "</a> /</div><h1>📖 程式詞彙總表</h1>" +
+      '<p class="muted">這門課的程式一共用到 ' + order.length + " 個詞。先看「詞的種類」打底,再用搜尋找你卡住的詞;點右邊的檔名會進到用到它的那堂課。</p>" +
+      kindsGuideHtml(true) +
+      '<div class="w-tools"><input id="w-q" type="search" placeholder="找詞或中文,例如 range、迴圈、socket、//"><div class="w-kinds"><button class="on" data-k="">全部 ' + order.length + "</button>" +
+      KINDS.filter(function (K) { return cnt[K.kind]; }).map(function (K) { return '<button data-k="' + attr(K.kind) + '">' + K.icon + " " + esc(K.kind) + " " + cnt[K.kind] + "</button>"; }).join("") + "</div></div>" +
+      '<table class="bd-terms w-table"><thead><tr><th>詞</th><th>種類</th><th>意思</th><th>出現在</th></tr></thead><tbody>' + order.map(function (key) {
+        var m = map[key], defs = m.defs.slice(0, 3);
+        return '<tr data-k="' + attr(m.kind) + '" data-q="' + attr((m.s + " " + m.defs.map(function (d) { return d.name; }).join(" ")).toLowerCase()) + '">' +
+          '<td class="bt-s"><code>' + esc(m.s) + '</code></td><td class="bt-k">' + kindChip(m.kind) + '</td><td class="bt-n">' +
+          defs.map(function (d) { return "<div>" + esc(d.name) + (d.fname ? ' <span class="muted">(' + esc(d.fname) + ")</span>" : "") + (d.ex ? '<div class="bt-ex">例:' + esc(d.ex) + "</div>" : "") + "</div>"; }).join("") +
+          (m.defs.length > 3 ? '<div class="muted">…另有 ' + (m.defs.length - 3) + " 種用法</div>" : "") +
+          '</td><td class="w-files">' + m.files.slice(0, 4).map(function (x) { return '<a href="' + x.href + '">' + esc(x.name) + "</a>"; }).join("") +
+          (m.files.length > 4 ? '<span class="muted">共 ' + m.files.length + " 支</span>" : "") + "</td></tr>";
+      }).join("") + "</tbody></table></div>";
+    main.innerHTML = h;
+    var q = $("#w-q"), kf = "";
+    function apply() {
+      var t = q.value.trim().toLowerCase();
+      $$(".w-table tbody tr").forEach(function (tr) { tr.style.display = (!kf || tr.dataset.k === kf) && (!t || tr.dataset.q.indexOf(t) >= 0) ? "" : "none"; });
+    }
+    q.oninput = apply;
+    $(".w-kinds").onclick = function (e) { var b = e.target.closest("button"); if (!b) return; kf = b.dataset.k; $$(".w-kinds button").forEach(function (x) { x.classList.toggle("on", x === b); }); apply(); };
+    main.onclick = function (e) { var k = e.target.closest(".kchip"); if (k) showKind(k.dataset.kind); };
+  }
+
   /* ---- 操作面板 ---- */
   function renderOps() {
     var body = $("#ops-body"); if (!body) return;
@@ -388,15 +480,31 @@
       if (!fx) R.L.forEach(function (x) { if (x.path === f.fixedPath) fx = x; });
       h += '<div class="op-card"><h4>' + (f.diff ? "✅ 這是修正版:和原檔差在哪" : "⚠️ 這支是錯誤示範:修正版改了這些") + '</h4><p class="muted" style="font-size:13px">紅色 − 是原檔的寫法,綠色 + 是修正後的寫法。</p>' +
         (fx ? diffHtml(fx.diff) : '<p class="muted">找不到修正版。</p>') + "</div>";
+    } else if (R.opsTab === "bd") {
+      var seen = lsGet("pyl_kinds_seen", false);
+      h += kindsGuideHtml(!seen);
+      if (!seen) lsSet("pyl_kinds_seen", true);
+      var list = (f.bd || []).filter(function (e) { return !s.lines || (e.ln[1] >= s.lines[0] && e.ln[0] <= s.lines[1]); });
+      h += '<div class="bd-head"><span>' + (s.lines ? "第 " + s.lines[0] + "–" + s.lines[1] + " 行拆成 " + list.length + " 句" : "整支程式共 " + list.length + " 句") +
+        '</span><a class="btn line sm" href="#/words/' + R.c.id + '">📖 本課詞彙總表</a></div><p class="muted bd-hint">點程式左邊的<b>行號</b>會跳到那一句;點種類標籤看它是什麼意思。</p>';
+      h += list.length ? list.map(sentenceHtml).join("") : '<p class="muted">這段沒有要拆的程式(都是註解或空行)。</p>';
     } else if (R.opsTab === "ai") {
       h += '<div class="op-card"><h4>🤖 問 AI 這段</h4><p>會帶上目前段落的程式碼與講解,請 AI 用家教方式解釋(先給提示,不直接給答案)。</p><textarea class="editor" id="ai-q" style="min-height:90px" placeholder="我卡住的地方…(可留白)"></textarea>' +
         '<div class="row"><button class="btn red sm" data-ai="claude">問 Claude</button><button class="btn line sm" data-ai="chatgpt">問 ChatGPT</button><button class="btn line sm" data-ai="copy">📋 只複製提示詞</button></div></div>';
     }
     body.innerHTML = h;
     bindOps();
+    if (R.opsTab === "bd" && R.bdLine) {
+      var hit = null;
+      $$(".bd-s", body).forEach(function (x) { if (+x.dataset.a <= R.bdLine && R.bdLine <= +x.dataset.b) hit = x; });
+      // 捲動的是整個 .ops 面板(手機是底部抽屜)
+      if (hit) { hit.classList.add("hit"); var sc = $("#ops"); sc.scrollTop += hit.getBoundingClientRect().top - sc.getBoundingClientRect().top - 100; }
+      R.bdLine = null;
+    }
   }
   function bindOps() {
     var s = R.segs[R.idx], f = R.f, b;
+    $("#ops-body").onclick = function (e) { var k = e.target.closest(".kchip"); if (k) showKind(k.dataset.kind, $("#ops-body")); };
     if ((b = $("#b-try"))) b.onclick = function () {
       R.edited = R.f.content.replace(s.try.from, s.try.to);
       highlightEdit(s);
