@@ -1,1 +1,0 @@
-import{N as e,O as t,R as n,T as r,j as i}from"./index-DK4xzNs9.js";import{t as a}from"./CourseGrid-B9jfJA-1.js";var o={__name:`CoursesPage`,setup(o){return(o,s)=>(n(),i(r,null,[s[0]||=t(`div`,{class:`sec-h`,style:{"margin-top":`6px`}},[t(`h2`,null,`全部課程`),t(`span`,null,`主線三門 + 三條支線`)],-1),e(a)],64))}};export{o as default};
