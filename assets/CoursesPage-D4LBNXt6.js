@@ -1,1 +1,0 @@
-import{Q as e,W as t,X as n,q as r,rt as i}from"./index-CFFZDEEg.js";import{t as a}from"./CourseGrid-DI-IG69z.js";var o={__name:`CoursesPage`,setup(o){return(o,s)=>(i(),n(t,null,[s[0]||=r(`div`,{class:`sec-h`,style:{"margin-top":`6px`}},[r(`h2`,null,`全部課程`),r(`span`,null,`主線三門 + 三條支線`)],-1),e(a)],64))}};export{o as default};
