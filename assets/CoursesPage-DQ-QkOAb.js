@@ -1,0 +1,1 @@
+import{$ as e,G as t,J as n,Z as r,it as i}from"./index-dLVwgDI-.js";import{t as a}from"./CourseGrid-BwOCqWaS.js";var o={__name:`CoursesPage`,setup(o){return(o,s)=>(i(),r(t,null,[s[0]||=n(`div`,{class:`sec-h`,style:{"margin-top":`6px`}},[n(`h2`,null,`全部課程`),n(`span`,null,`主線三門 + 三條支線`)],-1),e(a)],64))}};export{o as default};
